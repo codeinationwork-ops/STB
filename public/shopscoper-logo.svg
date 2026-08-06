@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 450 120" fill="none">
+  <!-- Shop in Dark Navy -->
+  <text x="10" y="85" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="900" font-size="78" fill="#0A1138" letter-spacing="-1.5">Shop</text>
+  
+  <!-- Sc in Vibrant Purple -->
+  <text x="195" y="85" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="900" font-size="78" fill="#7B1DF2" letter-spacing="-1.5">Sc</text>
+
+  <!-- Magnifying Glass 'o' with Shopping Bag -->
+  <g transform="translate(285, 24)">
+    <!-- Lens Circle -->
+    <circle cx="34" cy="34" r="25" stroke="#7B1DF2" stroke-width="11" fill="none"/>
+    <!-- Handle -->
+    <path d="M51 51 L67 67" stroke="#7B1DF2" stroke-width="12" stroke-linecap="round"/>
+    <!-- Shopping Bag Body -->
+    <rect x="23" y="30" width="22" height="18" rx="2.5" stroke="#0A1138" stroke-width="4" fill="none"/>
+    <!-- Shopping Bag Handle -->
+    <path d="M29 30 V25 C29 22.5 39 22.5 39 25 V30" stroke="#0A1138" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+  </g>
+
+  <!-- per in Vibrant Purple -->
+  <text x="360" y="85" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="900" font-size="78" fill="#7B1DF2" letter-spacing="-1.5">per</text>
+</svg>

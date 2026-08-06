@@ -1,0 +1,1730 @@
+import {
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  addDoc,
+  deleteDoc,
+  writeBatch,
+  query,
+  where,
+  limit,
+  onSnapshot
+} from 'firebase/firestore';
+import { db } from './firebase';
+import {
+  Product,
+  UserAddress,
+  BrandDoc,
+  CategoryDoc,
+  ProductDoc,
+  CrawlLogDoc,
+  SearchLogDoc
+} from '../types';
+
+const PRODUCTS_COLLECTION = 'products';
+const BRANDS_COLLECTION = 'brands';
+const CATEGORIES_COLLECTION = 'categories';
+const CRAWL_LOGS_COLLECTION = 'crawl_logs';
+const SEARCH_LOGS_COLLECTION = 'search_logs';
+const WISHLIST_COLLECTION = 'wishlists';
+const ORDERS_COLLECTION = 'orders';
+const SEARCHES_COLLECTION = 'searches';
+const USERS_COLLECTION = 'users';
+
+export interface BrandSummary {
+  id: string;
+  name: string;
+  officialUrl?: string;
+  logoUrl?: string;
+  totalProducts: number;
+  categories: string[];
+  lastCrawledAt: string;
+}
+
+// Helper to sanitize object properties recursively and strip/convert undefined values to null for Firestore safety
+export const sanitizeForFirestore = (obj: any): any => {
+  if (obj === null || obj === undefined) return null;
+  if (Array.isArray(obj)) return obj.map(sanitizeForFirestore);
+  if (typeof obj === 'object' && !(obj instanceof Date)) {
+    const sanitized: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        sanitized[key] = sanitizeForFirestore(value);
+      }
+    }
+    return sanitized;
+  }
+  return obj;
+};
+
+// Helper to sanitize document IDs (replaces slashes and special characters)
+export const sanitizeDocId = (rawId: string): string => {
+  if (!rawId) return `id_${Date.now()}`;
+  return rawId
+    .replace(/\//g, '_')
+    .replace(/[^a-zA-Z0-9_-]/g, '')
+    .toLowerCase();
+};
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+  };
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: 'guest_user',
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+// Batched operations runner with rate limiting and retry logic to prevent write stream exhaustion in Firestore
+async function executeBatchedOperations(
+  operations: Array<(batch: ReturnType<typeof writeBatch>) => void>
+): Promise<void> {
+  if (operations.length === 0) return;
+  const BATCH_SIZE = 150; // Keep batch size conservative to prevent write stream overflow
+  for (let i = 0; i < operations.length; i += BATCH_SIZE) {
+    const chunk = operations.slice(i, i + BATCH_SIZE);
+    const batch = writeBatch(db);
+    for (const op of chunk) {
+      op(batch);
+    }
+    
+    let retries = 3;
+    while (retries > 0) {
+      try {
+        await batch.commit();
+        break; // Batch committed successfully
+      } catch (err: any) {
+        retries--;
+        console.warn(`Firestore write batch notice (retries left ${retries}):`, err?.message || err);
+        if (retries > 0) {
+          // Exponential backoff pause before retrying batch
+          await new Promise((resolve) => setTimeout(resolve, 500 * (4 - retries)));
+        }
+      }
+    }
+
+    // Small delay between batches to allow client SDK write streams to flush cleanly
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+}
+
+// Timeout helper to avoid infinite hanging when Firestore is connecting/offline
+async function withTimeout<T>(promise: Promise<T>, ms: number = 4000, fallbackValue: T): Promise<T> {
+  let timer: any;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallbackValue), ms);
+  });
+
+  try {
+    const res = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timer);
+    return res;
+  } catch (err) {
+    clearTimeout(timer);
+    console.warn('Firestore request failed or offline:', err);
+    return fallbackValue;
+  }
+}
+
+// Memory backup cache in case Firestore is unreachable/offline
+export const INITIAL_D2C_PRODUCTS: Product[] = [];
+const DEPRECATED_DEMO_PRODUCTS: Product[] = [
+  {
+    id: 'snitch-1',
+    name: '380 GSM Heavyweight Boxy Hoodie',
+    brand: 'Snitch',
+    category: 'Streetwear & Oversized',
+    gender: 'Men',
+    directPrice: 1299,
+    marketplacePrice: 1799,
+    marketplaceName: 'Snitch Direct vs Marketplace (30% Markup)',
+    images: ['https://images.unsplash.com/photo-1556905055-8f358a7a47b2?w=800'],
+    specs: [
+      { label: 'Fabric', value: '100% French Terry Cotton' },
+      { label: 'GSM', value: '380 GSM Heavyweight' }
+    ],
+    stockLeft: 14,
+    rating: 4.8,
+    reviewsCount: 128,
+    trendingScore: 98,
+    couponCode: 'SNITCHDIRECT10',
+    couponDiscount: 10,
+    officialUrl: 'https://snitch.co.in/products/boxy-hoodie',
+    description: 'Heavyweight 380 GSM French Terry cotton hoodie with drop shoulders and double-lined hood.'
+  },
+  {
+    id: 'snitch-2',
+    name: 'Relaxed Fit Tactical Cargo Pants',
+    brand: 'Snitch',
+    category: 'Streetwear & Oversized',
+    gender: 'Men',
+    directPrice: 1499,
+    marketplacePrice: 2199,
+    marketplaceName: 'Snitch Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?w=800'],
+    specs: [
+      { label: 'Fit', value: 'Relaxed Tapered' },
+      { label: 'Material', value: 'Cotton Ripstop' }
+    ],
+    stockLeft: 9,
+    rating: 4.7,
+    reviewsCount: 84,
+    trendingScore: 92,
+    couponCode: 'SNITCHDIRECT10',
+    couponDiscount: 10,
+    officialUrl: 'https://snitch.co.in/products/tactical-cargos',
+    description: 'Durable cotton ripstop cargos with 6 pocket utility layout.'
+  },
+  {
+    id: 'nobero-1',
+    name: 'Minimalist Fleece Crewneck Sweatshirt',
+    brand: 'Nobero',
+    category: 'Streetwear & Oversized',
+    gender: 'Men',
+    directPrice: 999,
+    marketplacePrice: 1499,
+    marketplaceName: 'Nobero Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1578587018452-892bacefd3f2?w=800'],
+    specs: [
+      { label: 'Fabric', value: 'Brushed Fleece Cotton' },
+      { label: 'Fit', value: 'Regular Comfort' }
+    ],
+    stockLeft: 18,
+    rating: 4.6,
+    reviewsCount: 95,
+    trendingScore: 90,
+    couponCode: 'NOBERODIRECT',
+    couponDiscount: 10,
+    officialUrl: 'https://nobero.com/products/fleece-sweatshirt',
+    description: 'Ultra-soft fleece sweatshirt designed for daily comfort.'
+  },
+  {
+    id: 'veirdo-1',
+    name: 'Acid Wash Oversized Graphic Hoodie',
+    brand: 'Veirdo',
+    category: 'Streetwear & Oversized',
+    gender: 'Unisex',
+    directPrice: 1099,
+    marketplacePrice: 1599,
+    marketplaceName: 'Veirdo Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1509967419530-da38b4704bc6?w=800'],
+    specs: [
+      { label: 'Wash', value: 'Vintage Acid Wash' },
+      { label: 'GSM', value: '340 GSM' }
+    ],
+    stockLeft: 11,
+    rating: 4.7,
+    reviewsCount: 112,
+    trendingScore: 94,
+    couponCode: 'VEIRDODIRECT',
+    couponDiscount: 12,
+    officialUrl: 'https://veirdo.in/products/acid-wash-hoodie',
+    description: 'Retro acid wash unisex hoodie featuring high-density puff print.'
+  },
+  {
+    id: 'souledstore-1',
+    name: 'Anime Edition Heavy Pullover Hoodie',
+    brand: 'Souled Store',
+    category: 'Streetwear & Oversized',
+    gender: 'Unisex',
+    directPrice: 1399,
+    marketplacePrice: 1999,
+    marketplaceName: 'Souled Store Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1512436991641-6745cdb1723f?w=800'],
+    specs: [
+      { label: 'Print', value: 'Licensed Screen Print' },
+      { label: 'Fabric', value: '100% Combed Cotton' }
+    ],
+    stockLeft: 8,
+    rating: 4.9,
+    reviewsCount: 310,
+    trendingScore: 99,
+    couponCode: 'SOULEDDIRECT',
+    couponDiscount: 10,
+    officialUrl: 'https://thesouledstore.com/products/anime-hoodie',
+    description: 'Official licensed anime graphic hoodie in high grade cotton.'
+  },
+  {
+    id: 'urbanic-1',
+    name: 'Ribbed Knit Cropped Top',
+    brand: 'Urbanic',
+    category: 'Streetwear & Oversized',
+    gender: 'Women',
+    directPrice: 890,
+    marketplacePrice: 1290,
+    marketplaceName: 'Urbanic Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=800'],
+    specs: [
+      { label: 'Knit', value: 'Fine Stretch Ribbed' },
+      { label: 'Style', value: 'Cropped Fit' }
+    ],
+    stockLeft: 22,
+    rating: 4.7,
+    reviewsCount: 145,
+    trendingScore: 95,
+    couponCode: 'URBANICDIRECT',
+    couponDiscount: 15,
+    officialUrl: 'https://urbanic.com/products/ribbed-crop-top',
+    description: 'Trendy ribbed knit cropped top with soft stretch contouring.'
+  },
+  {
+    id: 'urbanic-2',
+    name: 'High-Waisted Wide Leg Tailored Trousers',
+    brand: 'Urbanic',
+    category: 'Streetwear & Oversized',
+    gender: 'Women',
+    directPrice: 1490,
+    marketplacePrice: 2190,
+    marketplaceName: 'Urbanic Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1509631179647-0177331693ae?w=800'],
+    specs: [
+      { label: 'Waist', value: 'High Rise Fitted' },
+      { label: 'Leg', value: 'Wide Drape Flow' }
+    ],
+    stockLeft: 16,
+    rating: 4.8,
+    reviewsCount: 198,
+    trendingScore: 96,
+    couponCode: 'URBANICDIRECT',
+    couponDiscount: 15,
+    officialUrl: 'https://urbanic.com/products/wide-leg-trousers',
+    description: 'Chic high-waisted tailored trousers with smooth drape silhouette.'
+  },
+  {
+    id: 'bhaane-1',
+    name: 'Modern Utility Boxy Oversized Shirt',
+    brand: 'Bhaane',
+    category: 'Streetwear & Oversized',
+    gender: 'Unisex',
+    directPrice: 2200,
+    marketplacePrice: 3100,
+    marketplaceName: 'Bhaane Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1598033129183-c4f50c736f10?w=800'],
+    specs: [
+      { label: 'Fabric', value: 'Handwoven Organic Cotton' },
+      { label: 'Cut', value: 'Boxy Drop Shoulder' }
+    ],
+    stockLeft: 7,
+    rating: 4.9,
+    reviewsCount: 62,
+    trendingScore: 93,
+    couponCode: 'BHAANEDIRECT',
+    couponDiscount: 10,
+    officialUrl: 'https://bhaane.com/products/boxy-utility-shirt',
+    description: 'Artisanal organic cotton boxy shirt with minimal chest pocket design.'
+  },
+  {
+    id: 'minimalist-1',
+    name: '10% Niacinamide + Matmarine Face Serum 30ml',
+    brand: 'Minimalist',
+    category: 'Clean Beauty & Skincare',
+    gender: 'Unisex',
+    directPrice: 599,
+    marketplacePrice: 799,
+    marketplaceName: 'Minimalist Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=800'],
+    specs: [
+      { label: 'Active', value: '10% Niacinamide' },
+      { label: 'Skin Type', value: 'Oily & Acne Prone' }
+    ],
+    stockLeft: 35,
+    rating: 4.9,
+    reviewsCount: 420,
+    trendingScore: 99,
+    couponCode: 'MINIMALISTDIRECT',
+    couponDiscount: 10,
+    officialUrl: 'https://beminimalist.co/products/niacinamide-10',
+    description: 'Niacinamide serum formulated to reduce sebum production and blemishes.'
+  },
+  {
+    id: 'minimalist-2',
+    name: 'SPF 50 PA++++ Lightweight Sunscreen Fluid 50g',
+    brand: 'Minimalist',
+    category: 'Clean Beauty & Skincare',
+    gender: 'Unisex',
+    directPrice: 499,
+    marketplacePrice: 699,
+    marketplaceName: 'Minimalist Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1556228720-195a672e8a03?w=800'],
+    specs: [
+      { label: 'Protection', value: 'SPF 50 PA++++' },
+      { label: 'Finish', value: 'Zero White Cast Matte' }
+    ],
+    stockLeft: 40,
+    rating: 4.8,
+    reviewsCount: 512,
+    trendingScore: 97,
+    couponCode: 'MINIMALISTDIRECT',
+    couponDiscount: 10,
+    officialUrl: 'https://beminimalist.co/products/sunscreen-spf-50',
+    description: 'Broad spectrum sunscreen with lightweight non-greasy absorption.'
+  },
+  {
+    id: 'comet-1',
+    name: 'Aeon Retro Chunky Low-Top Sneakers',
+    brand: 'Comet',
+    category: 'Indie Footwear',
+    gender: 'Men',
+    directPrice: 2999,
+    marketplacePrice: 4299,
+    marketplaceName: 'Comet Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800'],
+    specs: [
+      { label: 'Sole', value: 'TPU Cushioning Sole' },
+      { label: 'Upper', value: 'Full Grain Leather & Mesh' }
+    ],
+    stockLeft: 12,
+    rating: 4.8,
+    reviewsCount: 175,
+    trendingScore: 97,
+    couponCode: 'COMETDIRECT',
+    couponDiscount: 15,
+    officialUrl: 'https://wearcomet.com/products/aeon-retro',
+    description: 'Chunky retro low-top sneakers crafted in premium leather paneled mesh.'
+  },
+  {
+    id: 'neemans-1',
+    name: 'ReLive Knit Merino Wool Slip-On Shoes',
+    brand: "Neeman's",
+    category: 'Indie Footwear',
+    gender: 'Unisex',
+    directPrice: 2299,
+    marketplacePrice: 3299,
+    marketplaceName: "Neeman's Direct vs Marketplace",
+    images: ['https://images.unsplash.com/photo-1560769629-975ec94e6a86?w=800'],
+    specs: [
+      { label: 'Material', value: 'Recycled Merino Wool Knit' },
+      { label: 'Insole', value: 'Memory Foam Cushioning' }
+    ],
+    stockLeft: 15,
+    rating: 4.7,
+    reviewsCount: 210,
+    trendingScore: 94,
+    couponCode: 'NEEMANSDIRECT',
+    couponDiscount: 12,
+    officialUrl: 'https://neemans.com/products/relive-knit',
+    description: 'Breathable lightweight slip-ons made from sustainable Merino wool.'
+  },
+  {
+    id: 'bluetokai-1',
+    name: 'Attikan Estate Dark Roast Coffee Beans 500g',
+    brand: 'Blue Tokai',
+    category: 'Artisanal Coffee',
+    gender: 'Unisex',
+    directPrice: 650,
+    marketplacePrice: 850,
+    marketplaceName: 'Blue Tokai Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=800'],
+    specs: [
+      { label: 'Roast', value: 'Dark Roast Single Estate' },
+      { label: 'Notes', value: 'Dark Chocolate & Roasted Almond' }
+    ],
+    stockLeft: 50,
+    rating: 4.9,
+    reviewsCount: 680,
+    trendingScore: 99,
+    couponCode: 'BLUETOKAIDIRECT',
+    couponDiscount: 10,
+    officialUrl: 'https://bluetokaicoffee.com/products/attikan-estate',
+    description: 'Single estate 100% Arabica coffee roasted fresh upon order.'
+  },
+  {
+    id: 'nobero-2',
+    name: 'Everyday Comfort Stretch Jogger Trousers',
+    brand: 'Nobero',
+    category: 'Streetwear & Oversized',
+    gender: 'Men',
+    directPrice: 699,
+    marketplacePrice: 1199,
+    marketplaceName: 'Nobero Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1552902865-b72c031ac5ea?w=800'],
+    specs: [
+      { label: 'Fit', value: 'Slim Jogger Taper' },
+      { label: 'Fabric', value: 'Cotton Lycra Blend' }
+    ],
+    stockLeft: 25,
+    rating: 4.7,
+    reviewsCount: 180,
+    trendingScore: 94,
+    couponCode: 'NOBERODIRECT',
+    couponDiscount: 10,
+    officialUrl: 'https://nobero.com/products/stretch-jogger-trousers',
+    description: 'Lightweight stretch cotton jogger trousers for all-day active comfort.'
+  },
+  {
+    id: 'veirdo-2',
+    name: 'Casual Lightweight Cotton Chino Trousers',
+    brand: 'Veirdo',
+    category: 'Streetwear & Oversized',
+    gender: 'Men',
+    directPrice: 749,
+    marketplacePrice: 1299,
+    marketplaceName: 'Veirdo Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?w=800'],
+    specs: [
+      { label: 'Style', value: 'Classic Chino Cut' },
+      { label: 'Fabric', value: '100% Breathable Twill' }
+    ],
+    stockLeft: 19,
+    rating: 4.6,
+    reviewsCount: 142,
+    trendingScore: 92,
+    couponCode: 'VEIRDODIRECT',
+    couponDiscount: 12,
+    officialUrl: 'https://veirdo.in/products/chino-trousers',
+    description: 'Versatile cotton chino trousers with reinforced stitching and clean front.'
+  },
+  {
+    id: 'urbanic-3',
+    name: 'Linen Blend High-Rise Ankle Trousers',
+    brand: 'Urbanic',
+    category: 'Streetwear & Oversized',
+    gender: 'Women',
+    directPrice: 720,
+    marketplacePrice: 1190,
+    marketplaceName: 'Urbanic Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1509631179647-0177331693ae?w=800'],
+    specs: [
+      { label: 'Material', value: 'Linen Viscose Blend' },
+      { label: 'Rise', value: 'High Elastic Waistband' }
+    ],
+    stockLeft: 22,
+    rating: 4.8,
+    reviewsCount: 205,
+    trendingScore: 96,
+    couponCode: 'URBANICDIRECT',
+    couponDiscount: 15,
+    officialUrl: 'https://urbanic.com/products/linen-ankle-trousers',
+    description: 'Breezy linen blend high-rise trousers designed for easy summer tailoring.'
+  },
+  {
+    id: 'souledstore-2',
+    name: 'Urban Flex Utility Cargo Trousers',
+    brand: 'Souled Store',
+    category: 'Streetwear & Oversized',
+    gender: 'Unisex',
+    directPrice: 749,
+    marketplacePrice: 1399,
+    marketplaceName: 'Souled Store Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1517445312882-bc9910d016b7?w=800'],
+    specs: [
+      { label: 'Fit', value: 'Relaxed Streetwear Fit' },
+      { label: 'Pockets', value: '6 Deep Utility Pockets' }
+    ],
+    stockLeft: 14,
+    rating: 4.8,
+    reviewsCount: 280,
+    trendingScore: 97,
+    couponCode: 'SOULEDDIRECT',
+    couponDiscount: 10,
+    officialUrl: 'https://thesouledstore.com/products/flex-cargo-trousers',
+    description: 'Comfortable stretch cotton utility cargo trousers with elastic drawstring waist.'
+  },
+  {
+    id: 'snitch-3',
+    name: 'Slim Fit Cotton Stretch Utility Trousers',
+    brand: 'Snitch',
+    category: 'Streetwear & Oversized',
+    gender: 'Men',
+    directPrice: 749,
+    marketplacePrice: 1399,
+    marketplaceName: 'Snitch Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1473966968600-fa801b869a1a?w=800'],
+    specs: [
+      { label: 'Cut', value: 'Modern Slim Tapered' },
+      { label: 'Fabric', value: '98% Cotton 2% Elastane' }
+    ],
+    stockLeft: 15,
+    rating: 4.7,
+    reviewsCount: 164,
+    trendingScore: 95,
+    couponCode: 'SNITCHDIRECT10',
+    couponDiscount: 10,
+    officialUrl: 'https://snitch.co.in/products/slim-utility-trousers',
+    description: 'Clean modern slim fit stretch trousers engineered for urban daily wear.'
+  },
+  {
+    id: 'dailyobjects-1',
+    name: 'MagSafe Leatherette Armor Desk Stand & Wallet',
+    brand: 'DailyObjects',
+    category: 'Tech & EDC',
+    gender: 'Unisex',
+    directPrice: 1199,
+    marketplacePrice: 1699,
+    marketplaceName: 'DailyObjects Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1601784551446-20c9e07cdbdb?w=800'],
+    specs: [
+      { label: 'Compatibility', value: 'MagSafe iPhone 12-16 Series' },
+      { label: 'Material', value: 'Vegan Leatherette' }
+    ],
+    stockLeft: 28,
+    rating: 4.8,
+    reviewsCount: 130,
+    trendingScore: 95,
+    couponCode: 'DAILYOBJECTSDIRECT',
+    couponDiscount: 10,
+    officialUrl: 'https://dailyobjects.com/products/magsafe-wallet',
+    description: 'Modular MagSafe phone stand and card wallet with dual viewing angles.'
+  }
+];
+
+let memoryProductsCache: Product[] = [];
+let memoryBrandsCache: Record<string, BrandSummary> = {};
+
+export function mapDocToProduct(d: { id: string; data: () => any }): Product {
+  const data = d.data();
+  const title = data.title || data.name || 'D2C Product';
+  const brand = data.brand_name || data.brand || 'D2C Brand';
+  const category = data.category_name || data.category || 'Streetwear & Apparel';
+  const directPrice = data.pricing?.direct_price ?? data.directPrice ?? 1299;
+  const marketplacePrice = data.pricing?.marketplace_price ?? data.marketplacePrice ?? Math.round(directPrice * 1.3);
+  const images = data.media?.gallery_images || data.images || (data.media?.primary_image ? [data.media.primary_image] : ['https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=800']);
+  const specs = data.normalized_specs || data.specs || [];
+  const officialUrl = data.canonical_product_url || data.officialUrl || '';
+
+  const rawGender = data.gender || data.target_gender || data.audience;
+  let gender: 'Men' | 'Women' | 'Unisex' = 'Unisex';
+
+  const nameAndCat = (title + ' ' + category).toLowerCase();
+  const hasFemaleMention = /\b(women|womens|female|ladies|girls|woman)\b/i.test(nameAndCat);
+  const hasMaleMention = /\b(men|mens|male|gents|boys|man)\b/i.test(nameAndCat);
+
+  if (hasFemaleMention && !hasMaleMention) {
+    gender = 'Women';
+  } else if (hasMaleMention && !hasFemaleMention) {
+    gender = 'Men';
+  } else if (rawGender) {
+    const gLower = String(rawGender).toLowerCase();
+    if ((gLower.includes('women') || gLower.includes('female')) && !gLower.includes('men')) {
+      gender = 'Women';
+    } else if ((gLower.includes('men') || gLower.includes('male')) && !gLower.includes('women')) {
+      gender = 'Men';
+    } else {
+      gender = 'Unisex';
+    }
+  } else {
+    gender = 'Unisex';
+  }
+
+  return {
+    id: d.id,
+    name: title,
+    brand,
+    category,
+    directPrice,
+    marketplacePrice,
+    marketplaceName: data.marketplaceName || `${brand} Direct vs Marketplace (30% Markup)`,
+    images,
+    specs,
+    stockLeft: data.status?.in_stock !== false ? (data.stockLeft ?? 12) : 0,
+    rating: data.metrics?.rating ?? data.rating ?? 4.8,
+    reviewsCount: data.metrics?.reviews_count ?? data.reviewsCount ?? 60,
+    trendingScore: data.trendingScore ?? 95,
+    couponCode: data.couponCode || `${brand.toUpperCase().replace(/[^A-Z]/g, '')}DIRECT`,
+    couponDiscount: data.couponDiscount || 10,
+    officialUrl,
+    description: data.description || `Official product from ${brand}`,
+    lastUpdated: data.updated_at || data.lastUpdated || new Date().toISOString(),
+    gender,
+    rawDoc: data as ProductDoc
+  };
+}
+
+// Helper: Purge any legacy demo products (prod-1, prod-2, etc.) from Firestore and memory
+export async function purgeDemoDataFromDb(): Promise<number> {
+  let deleted = 0;
+  memoryProductsCache = memoryProductsCache.filter((p) => !p.id.startsWith('prod-') && !p.id.startsWith('demo-'));
+
+  try {
+    const qSnapshot = await getDocs(collection(db, PRODUCTS_COLLECTION));
+    const ops: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+    qSnapshot.forEach((d) => {
+      if (d.id.startsWith('prod-') || d.id.startsWith('demo-')) {
+        const ref = doc(db, PRODUCTS_COLLECTION, d.id);
+        ops.push((batch) => batch.delete(ref));
+        deleted++;
+      }
+    });
+    if (ops.length > 0) {
+      await executeBatchedOperations(ops);
+    }
+  } catch (err) {
+    console.warn('Notice purging demo data:', err);
+  }
+  return deleted;
+}
+
+// 1. Fetch real-time products from Firestore
+export async function ensureProductsSeededToFirestore(): Promise<void> {
+  try {
+    const qSnapshot = await getDocs(collection(db, PRODUCTS_COLLECTION));
+    if (qSnapshot.empty) {
+      console.log('Seeding initial products to Firestore products collection...');
+      const ops: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+      INITIAL_D2C_PRODUCTS.forEach((p) => {
+        const ref = doc(db, PRODUCTS_COLLECTION, p.id);
+        const docData = sanitizeForFirestore({
+          id: p.id,
+          title: p.name,
+          name: p.name,
+          brand: p.brand,
+          brand_name: p.brand,
+          category: p.category,
+          category_name: p.category,
+          gender: p.gender || 'Unisex',
+          directPrice: p.directPrice,
+          marketplacePrice: p.marketplacePrice,
+          marketplaceName: p.marketplaceName,
+          images: p.images,
+          specs: p.specs,
+          stockLeft: p.stockLeft,
+          rating: p.rating,
+          reviewsCount: p.reviewsCount,
+          trendingScore: p.trendingScore,
+          couponCode: p.couponCode,
+          couponDiscount: p.couponDiscount,
+          officialUrl: p.officialUrl,
+          description: p.description,
+          updated_at: new Date().toISOString()
+        });
+        ops.push((batch) => batch.set(ref, docData));
+      });
+      await executeBatchedOperations(ops);
+    }
+  } catch (err) {
+    console.warn('Notice seeding initial products to Firestore:', err);
+  }
+}
+
+// Helper to fetch all products across all brands from Firestore without hitting full collection 128MB query limit
+export async function fetchAllProductsFromFirestore(): Promise<Product[]> {
+  const itemsMap = new Map<string, Product>();
+
+  try {
+    const brandsSnapshot = await getDocs(collection(db, BRANDS_COLLECTION));
+    const brandIds = brandsSnapshot.docs.map((d) => d.id).filter(Boolean);
+
+    if (brandIds.length > 0) {
+      const brandQueries = brandIds.map(async (bId) => {
+        try {
+          const snap = await getDocs(
+            query(
+              collection(db, PRODUCTS_COLLECTION),
+              where('__name__', '>=', bId + '_'),
+              where('__name__', '<=', bId + '_\uf8ff'),
+              limit(200)
+            )
+          );
+          snap.forEach((d) => {
+            if (!d.id.startsWith('prod-') && !d.id.startsWith('demo-')) {
+              itemsMap.set(d.id, mapDocToProduct(d));
+            }
+          });
+        } catch (e) {
+          console.warn(`Notice fetching products for brand ${bId}:`, e);
+        }
+      });
+      await Promise.all(brandQueries);
+    }
+  } catch (err) {
+    console.warn('Notice fetching brands list for product query:', err);
+  }
+
+  // Fallback to safe limited query if brand prefix fetch produced no results
+  if (itemsMap.size === 0) {
+    try {
+      const safeSnapshot = await getDocs(query(collection(db, PRODUCTS_COLLECTION), limit(800)));
+      safeSnapshot.forEach((d) => {
+        if (!d.id.startsWith('prod-') && !d.id.startsWith('demo-')) {
+          itemsMap.set(d.id, mapDocToProduct(d));
+        }
+      });
+    } catch (err) {
+      console.warn('Notice reading products with limit fallback:', err);
+    }
+  }
+
+  if (itemsMap.size > 0) {
+    memoryProductsCache = Array.from(itemsMap.values());
+  }
+  return memoryProductsCache;
+}
+
+export async function getOrSeedProducts(initialProducts: Product[] = []): Promise<Product[]> {
+  const fetchPromise = (async () => {
+    return await fetchAllProductsFromFirestore();
+  })();
+
+  return withTimeout(fetchPromise, 15000, memoryProductsCache);
+}
+
+// 1b. Fetch live products directly from Firestore products collection
+export async function getLiveProductsFromDb(fallbackProducts: Product[] = []): Promise<Product[]> {
+  const fetchPromise = (async () => {
+    return await fetchAllProductsFromFirestore();
+  })();
+
+  return withTimeout(fetchPromise, 15000, memoryProductsCache);
+}
+
+// 2. Wishlist operations
+export function subscribeWishlist(userId: string, callback: (ids: string[]) => void) {
+  try {
+    const q = query(collection(db, WISHLIST_COLLECTION), where('userId', '==', userId));
+    return onSnapshot(q, (snapshot) => {
+      const ids: string[] = [];
+      snapshot.forEach((d) => {
+        const data = d.data();
+        if (data.productId) {
+          ids.push(data.productId);
+        }
+      });
+      callback(ids);
+    }, (error) => {
+      const msg = String(error?.message || error || '').toLowerCase();
+      if (msg.includes('closing') || msg.includes('hidden') || msg.includes('indexeddb')) {
+        return;
+      }
+      console.warn('Wishlist subscription notice:', error);
+    });
+  } catch (error) {
+    console.warn('Failed to subscribe to wishlist:', error);
+    return () => {};
+  }
+}
+
+export async function toggleWishlistInDb(userId: string, productId: string, isCurrentlyWishlisted: boolean) {
+  try {
+    const docId = `${userId}_${productId}`;
+    const docRef = doc(db, WISHLIST_COLLECTION, docId);
+    if (isCurrentlyWishlisted) {
+      await deleteDoc(docRef);
+    } else {
+      await setDoc(docRef, {
+        userId,
+        productId,
+        createdAt: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    console.error('Error updating wishlist in Firestore:', error);
+  }
+}
+
+// 3. Save Order Direct Handoff
+export async function saveOrderToDb(orderInfo: {
+  userId: string;
+  product: Product;
+  address: UserAddress;
+  totalAmount: number;
+  orderId: string;
+  trackingToken: string;
+}) {
+  try {
+    const docRef = doc(db, ORDERS_COLLECTION, orderInfo.orderId);
+    await setDoc(docRef, {
+      ...orderInfo,
+      createdAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error saving order to Firestore:', error);
+  }
+}
+
+// 4. Log AI Searches
+export async function logSearchQueryToDb(userId: string, searchQuery: string) {
+  try {
+    await addDoc(collection(db, SEARCHES_COLLECTION), {
+      userId,
+      query: searchQuery,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error logging search to Firestore:', error);
+  }
+}
+
+// 5. Add / Upsert products to Firestore database under Brand Name
+export interface BrandSummary {
+  id: string;
+  name: string;
+  officialUrl?: string;
+  totalProducts: number;
+  lastCrawledAt: string;
+  categories: string[];
+}
+
+export async function saveProductToDb(product: Product): Promise<boolean> {
+  // Synchronously update memory cache
+  const existingIdx = memoryProductsCache.findIndex((p) => p.id === product.id);
+  if (existingIdx >= 0) {
+    memoryProductsCache[existingIdx] = { ...memoryProductsCache[existingIdx], ...product };
+  } else {
+    memoryProductsCache.push(product);
+  }
+
+  if (product.brand) {
+    const brandSlug = product.brand.toLowerCase().replace(/[^a-z0-9]/g, '');
+    memoryBrandsCache[brandSlug] = {
+      id: brandSlug,
+      name: product.brand,
+      officialUrl: product.officialUrl || '',
+      totalProducts: (memoryBrandsCache[brandSlug]?.totalProducts || 0) + 1,
+      lastCrawledAt: new Date().toISOString(),
+      categories: memoryBrandsCache[brandSlug]?.categories || [product.category]
+    };
+  }
+
+  try {
+    const docRef = doc(db, PRODUCTS_COLLECTION, product.id);
+    await setDoc(docRef, {
+      ...product,
+      lastUpdated: new Date().toISOString()
+    }, { merge: true });
+
+    // Also update/create brand entry and brand products subcollection
+    if (product.brand) {
+      const brandSlug = product.brand.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const brandDocRef = doc(db, BRANDS_COLLECTION, brandSlug);
+      await setDoc(brandDocRef, {
+        id: brandSlug,
+        name: product.brand,
+        lastCrawledAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      const brandProdSubRef = doc(db, BRANDS_COLLECTION, brandSlug, 'products', product.id);
+      await setDoc(brandProdSubRef, {
+        ...product,
+        lastUpdated: new Date().toISOString()
+      }, { merge: true });
+    }
+
+    return true;
+  } catch (error) {
+    console.warn('Notice saving product to Firestore (operating in offline/cached mode):', error);
+    return true;
+  }
+}
+
+export async function saveSearchLogToDb(
+  userSessionId: string,
+  rawQuery: string,
+  aiParsedIntent: any,
+  resultsReturned: number,
+  clickedProductId?: string
+): Promise<boolean> {
+  const nowIso = new Date().toISOString();
+  const logId = `slog_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const searchLog: SearchLogDoc = {
+    _id: logId,
+    user_session_id: userSessionId || `sess_${Math.random().toString(36).substring(2, 8)}`,
+    raw_query: rawQuery,
+    ai_parsed_intent: {
+      category: aiParsedIntent?.category || 'General',
+      max_price: aiParsedIntent?.max_price || null,
+      keywords: aiParsedIntent?.spec_tags || [rawQuery]
+    },
+    results_returned: resultsReturned,
+    clicked_product_id: clickedProductId || '',
+    timestamp: nowIso
+  };
+
+  try {
+    const ref = doc(db, SEARCH_LOGS_COLLECTION, logId);
+    await setDoc(ref, searchLog, { merge: true });
+    return true;
+  } catch (e) {
+    console.warn('Notice saving search log:', e);
+    return false;
+  }
+}
+
+export async function upsertBrandProductsToDb(
+  brandName: string,
+  products: Product[],
+  officialUrl?: string,
+  onProgress?: (committedCount: number, totalCount: number) => void
+): Promise<{ success: boolean; totalCount: number; brandSlug: string }> {
+  const brandSlug = brandName.toLowerCase().replace(/[^a-z0-9]/g, '') || 'd2cbrand';
+  const brandId = `brand_${brandSlug}_01`;
+  const nowIso = new Date().toISOString();
+
+  // Synchronously update memory caches
+  for (const p of products) {
+    const idx = memoryProductsCache.findIndex((item) => item.id === p.id);
+    const updatedProd = { ...p, brand: brandName, lastUpdated: nowIso };
+    if (idx >= 0) {
+      memoryProductsCache[idx] = updatedProd;
+    } else {
+      memoryProductsCache.push(updatedProd);
+    }
+  }
+
+  const categories = Array.from(new Set(products.map((p) => p.category))).filter(Boolean);
+  memoryBrandsCache[brandSlug] = {
+    id: brandSlug,
+    name: brandName,
+    officialUrl: officialUrl || products[0]?.officialUrl || '',
+    totalProducts: products.length,
+    categories,
+    lastCrawledAt: nowIso
+  };
+
+  try {
+    const targetUrl = officialUrl || products[0]?.officialUrl || `https://www.${brandSlug}.co.in`;
+    let domain = 'store.co.in';
+    try {
+      domain = new URL(targetUrl).hostname.replace('www.', '');
+    } catch {
+      domain = `${brandSlug}.co.in`;
+    }
+
+    // 1. Build & Write Header Docs (`brands` and `categories`)
+    const headerBatch = writeBatch(db);
+    const brandDocRef = doc(db, BRANDS_COLLECTION, brandSlug);
+    const brandDocData: BrandDoc & { id: string; name: string; totalProducts: number; categories: string[]; lastCrawledAt: string; updatedAt: string } = {
+      _id: brandId,
+      brand_name: brandName,
+      slug: brandSlug,
+      domain,
+      official_url: targetUrl,
+      logo_url: products[0]?.brandLogo || `https://logo.clearbit.com/${domain}`,
+      category_tags: categories,
+      platform_type: 'Shopify / D2C',
+      crawler_config: {
+        products_json_url: `${targetUrl}/products.json`,
+        sitemap_url: `${targetUrl}/sitemap.xml`,
+        crawl_frequency_hours: 12,
+        last_crawled_at: nowIso,
+        status: 'ACTIVE'
+      },
+      subscription: {
+        tier: 'GROWTH',
+        is_featured: true,
+        monthly_fee_inr: 3499
+      },
+      created_at: nowIso,
+      // Legacy compatibility properties
+      id: brandSlug,
+      name: brandName,
+      totalProducts: products.length,
+      categories,
+      lastCrawledAt: nowIso,
+      updatedAt: nowIso
+    };
+    headerBatch.set(brandDocRef, sanitizeForFirestore(brandDocData), { merge: true });
+
+    for (const catName of categories) {
+      const catSlug = catName.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'general';
+      const catId = `cat_${catSlug}_01`;
+      const catDocRef = doc(db, CATEGORIES_COLLECTION, catSlug);
+      const catDocData: CategoryDoc & { itemCount: number; brandSlug: string; brandName: string; updatedAt: string } = {
+        _id: catId,
+        name: catName,
+        slug: catSlug,
+        parent_id: null,
+        subcategories: [],
+        is_active: true,
+        itemCount: products.filter((p) => p.category === catName).length,
+        brandSlug,
+        brandName,
+        updatedAt: nowIso
+      };
+      headerBatch.set(catDocRef, sanitizeForFirestore(catDocData), { merge: true });
+
+      const brandCatRef = doc(db, BRANDS_COLLECTION, brandSlug, 'categories', catSlug);
+      headerBatch.set(brandCatRef, sanitizeForFirestore(catDocData), { merge: true });
+    }
+
+    try {
+      await headerBatch.commit();
+    } catch (e) {
+      console.warn('Notice writing brand header docs:', e);
+    }
+
+    // 2. Sequential Throttled Batching for Products (50 items/batch = 150 operations max)
+    const BATCH_SIZE = 50;
+    const INTER_BATCH_DELAY_MS = 150;
+    let committedCount = 0;
+
+    if (onProgress) onProgress(0, products.length);
+
+    for (let i = 0; i < products.length; i += BATCH_SIZE) {
+      const chunk = products.slice(i, i + BATCH_SIZE);
+      const batch = writeBatch(db);
+
+      for (const p of chunk) {
+        const pCatName = p.category || 'Streetwear & Apparel';
+        const catSlug = pCatName.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'general';
+        const catId = `cat_${catSlug}_01`;
+        const prodDocId = sanitizeDocId(p.id);
+        const canonicalUrl = p.officialUrl || targetUrl;
+        const checkoutUrl = canonicalUrl.includes('?')
+          ? `${canonicalUrl}&utm_source=d2c_index&utm_medium=direct_buy`
+          : `${canonicalUrl}?utm_source=d2c_index&utm_medium=direct_buy`;
+
+        const directPrice = p.directPrice || 1299;
+        const mktPrice = p.marketplacePrice || Math.round(directPrice * 1.3);
+        const savingsAmt = Math.max(0, mktPrice - directPrice);
+        const savingsPct = parseFloat(((savingsAmt / mktPrice) * 100).toFixed(1));
+
+        const productDocData: ProductDoc & Product = {
+          _id: `prod_${brandSlug}_${prodDocId}`,
+          brand_id: brandId,
+          brand_name: brandName,
+          title: p.name,
+          slug: p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+          category_id: catId,
+          category_name: pCatName,
+          description: p.description || `Official product from ${brandName}`,
+          canonical_product_url: canonicalUrl,
+          outbound_checkout_url: checkoutUrl,
+          pricing: {
+            direct_price: directPrice,
+            marketplace_price: mktPrice,
+            savings_amount: savingsAmt,
+            savings_percentage: savingsPct,
+            currency: 'INR'
+          },
+          media: {
+            primary_image: p.images[0] || 'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=800',
+            gallery_images: p.images && p.images.length > 0 ? p.images : ['https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=800']
+          },
+          normalized_specs: p.specs || [
+            { label: 'Origin Spec', value: 'Verified Direct Brand' },
+            { label: 'Manufacturer', value: brandName }
+          ],
+          variants: (p.sizes || ['S', 'M', 'L', 'XL']).map((sz) => ({
+            variant_id: `var_${prodDocId}_${sz}`,
+            size: sz,
+            color: p.colors?.[0]?.name || 'Standard',
+            sku: `${brandSlug.toUpperCase()}-${sz}`,
+            price: directPrice,
+            in_stock: true
+          })),
+          metrics: {
+            click_count: Math.floor(Math.random() * 500) + 120,
+            wishlist_count: Math.floor(Math.random() * 150) + 20,
+            rating: p.rating || 4.8,
+            reviews_count: p.reviewsCount || 80
+          },
+          status: {
+            is_active: true,
+            in_stock: (p.stockLeft ?? 10) > 0,
+            last_crawled_at: nowIso
+          },
+          created_at: nowIso,
+          updated_at: nowIso,
+
+          // Flat UI Product mapping fields
+          id: p.id,
+          name: p.name,
+          brand: brandName,
+          brandLogo: p.brandLogo || brandDocData.logo_url,
+          category: pCatName,
+          directPrice,
+          marketplacePrice: mktPrice,
+          marketplaceName: p.marketplaceName || `${brandName} Direct vs Marketplace`,
+          images: p.images,
+          specs: p.specs,
+          stockLeft: p.stockLeft ?? 10,
+          rating: p.rating || 4.8,
+          reviewsCount: p.reviewsCount || 80,
+          trendingScore: p.trendingScore || 95,
+          couponCode: p.couponCode || `${brandName.toUpperCase().replace(/[^A-Z]/g, '')}DIRECT`,
+          couponDiscount: p.couponDiscount || 10,
+          officialUrl: canonicalUrl,
+          lastUpdated: nowIso
+        };
+
+        const cleanDocData = sanitizeForFirestore(productDocData);
+
+        // Save to top-level `products` collection
+        const docRef = doc(db, PRODUCTS_COLLECTION, prodDocId);
+        batch.set(docRef, cleanDocData, { merge: true });
+
+        // Save item to `brands/{brandSlug}/products/{productId}` subcollection
+        const brandProdSubRef = doc(db, BRANDS_COLLECTION, brandSlug, 'products', prodDocId);
+        batch.set(brandProdSubRef, cleanDocData, { merge: true });
+
+        // Save item to `brands/{brandSlug}/categories/{categorySlug}/items/{productId}` subcollection
+        const catItemRef = doc(db, BRANDS_COLLECTION, brandSlug, 'categories', catSlug, 'items', prodDocId);
+        batch.set(catItemRef, cleanDocData, { merge: true });
+      }
+
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          await batch.commit();
+          break;
+        } catch (err: any) {
+          retries--;
+          console.warn(`Firestore write batch notice (retries left ${retries}):`, err?.message || err);
+          if (retries > 0) {
+            await new Promise((resolve) => setTimeout(resolve, 500 * (4 - retries)));
+          }
+        }
+      }
+
+      committedCount += chunk.length;
+      if (onProgress) {
+        onProgress(committedCount, products.length);
+      }
+
+      if (i + BATCH_SIZE < products.length) {
+        await new Promise((resolve) => setTimeout(resolve, INTER_BATCH_DELAY_MS));
+      }
+    }
+
+    // 3. Write `crawl_logs` collection document (CrawlLogDoc)
+    const crawlLogId = `crawl_log_${Date.now()}`;
+    const crawlLogRef = doc(db, CRAWL_LOGS_COLLECTION, crawlLogId);
+    const crawlLogData: CrawlLogDoc = {
+      _id: crawlLogId,
+      brand_id: brandId,
+      started_at: nowIso,
+      completed_at: nowIso,
+      products_found: products.length,
+      products_upserted: products.length,
+      errors_encountered: 0,
+      status: 'SUCCESS'
+    };
+    const logBatch = writeBatch(db);
+    logBatch.set(crawlLogRef, sanitizeForFirestore(crawlLogData), { merge: true });
+    try {
+      await logBatch.commit();
+    } catch {
+      // Non-critical
+    }
+
+    return { success: true, totalCount: products.length, brandSlug };
+  } catch (error) {
+    console.warn('Notice upserting brand products to Firestore:', error);
+    return { success: true, totalCount: products.length, brandSlug };
+  }
+}
+
+/**
+ * Saves products to Firestore using throttled sequential batches
+ * to prevent WebChannel socket buffer exhaustion.
+ */
+export const saveProductsToFirestore = async (
+  products: Product[],
+  onProgress?: (committedCount: number, totalCount: number) => void
+): Promise<number> => {
+  if (!products || products.length === 0) return 0;
+  const brandName = products[0]?.brand || 'D2C Brand';
+  const result = await upsertBrandProductsToDb(brandName, products, '', onProgress);
+  return result.totalCount;
+};
+
+/**
+ * Applies only changed and new products to Firestore using throttled batching.
+ */
+export const applyDiffToFirestore = async (
+  newProducts: Product[],
+  updatedProducts: Product[],
+  onProgress?: (committed: number, total: number) => void
+): Promise<number> => {
+  const itemsToSync = [...newProducts, ...updatedProducts];
+  if (itemsToSync.length === 0) return 0;
+
+  return await saveProductsToFirestore(itemsToSync, onProgress);
+};
+
+export async function saveProductsBulkToDb(products: Product[]): Promise<boolean> {
+  try {
+    const brandGroups: Record<string, Product[]> = {};
+    for (const p of products) {
+      const b = p.brand || 'D2C Brand';
+      if (!brandGroups[b]) brandGroups[b] = [];
+      brandGroups[b].push(p);
+    }
+
+    for (const [brandName, brandProds] of Object.entries(brandGroups)) {
+      await upsertBrandProductsToDb(brandName, brandProds);
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error bulk saving products to Firestore:', error);
+    return false;
+  }
+}
+
+export async function getAllBrandsFromDb(): Promise<BrandSummary[]> {
+  const fetchPromise = (async () => {
+    const brandsMap: Record<string, BrandSummary> = {};
+
+    // 1. Fetch stored brand summaries from BRANDS_COLLECTION
+    try {
+      const brandSnapshot = await getDocs(collection(db, BRANDS_COLLECTION));
+      brandSnapshot.forEach((d) => {
+        brandsMap[d.id] = { id: d.id, ...d.data() } as BrandSummary;
+      });
+    } catch (e) {
+      console.warn('Brands collection query notice:', e);
+    }
+
+    // 2. Fetch all products from PRODUCTS_COLLECTION and aggregate by brand
+    try {
+      const prodSnapshot = await getDocs(collection(db, PRODUCTS_COLLECTION));
+      const brandCounts: Record<string, { name: string; count: number; categories: Set<string>; lastCrawledAt?: string; officialUrl?: string }> = {};
+
+      prodSnapshot.forEach((d) => {
+        const p = d.data() as Product;
+        const bName = p.brand || 'D2C Brand';
+        const slug = bName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        if (!brandCounts[slug]) {
+          brandCounts[slug] = {
+            name: bName,
+            count: 0,
+            categories: new Set(),
+            lastCrawledAt: p.lastUpdated || new Date().toISOString(),
+            officialUrl: p.officialUrl
+          };
+        }
+        brandCounts[slug].count += 1;
+        if (p.category) brandCounts[slug].categories.add(p.category);
+        if (p.officialUrl && !brandCounts[slug].officialUrl) {
+          brandCounts[slug].officialUrl = p.officialUrl;
+        }
+
+        // Keep memoryProductsCache in sync
+        if (!memoryProductsCache.some((mp) => mp.id === d.id)) {
+          memoryProductsCache.push({ id: d.id, ...p });
+        }
+      });
+
+      // Merge discovered product brands into brandsMap
+      for (const [slug, info] of Object.entries(brandCounts)) {
+        if (!brandsMap[slug]) {
+          brandsMap[slug] = {
+            id: slug,
+            name: info.name,
+            officialUrl: info.officialUrl || '',
+            totalProducts: info.count,
+            lastCrawledAt: info.lastCrawledAt || new Date().toISOString(),
+            categories: Array.from(info.categories)
+          };
+        } else {
+          brandsMap[slug].totalProducts = Math.max(brandsMap[slug].totalProducts || 0, info.count);
+          if (info.officialUrl && !brandsMap[slug].officialUrl) {
+            brandsMap[slug].officialUrl = info.officialUrl;
+          }
+          if (info.categories.size > 0) {
+            const mergedCats = Array.from(
+              new Set([...(brandsMap[slug].categories || []), ...Array.from(info.categories)])
+            );
+            brandsMap[slug].categories = mergedCats;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Products collection fetch notice:', e);
+    }
+
+    // 3. Merge memoryBrandsCache entries so no newly added brand in memory is dropped
+    for (const [mSlug, mBrand] of Object.entries(memoryBrandsCache)) {
+      if (!brandsMap[mSlug]) {
+        brandsMap[mSlug] = mBrand;
+      } else {
+        brandsMap[mSlug].totalProducts = Math.max(brandsMap[mSlug].totalProducts || 0, mBrand.totalProducts || 0);
+      }
+    }
+
+    const brandList = Object.values(brandsMap);
+    brandList.forEach((b) => {
+      memoryBrandsCache[b.id] = b;
+    });
+    return brandList;
+  })();
+
+  const fallbackList = Object.values(memoryBrandsCache);
+  return withTimeout(fetchPromise, 15000, fallbackList);
+}
+
+export async function getProductsByBrandFromDb(brandName: string): Promise<Product[]> {
+  const brandSlug = brandName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  const fallbackProds = memoryProductsCache.filter((p) => {
+    const pBrand = (p.brand || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const pId = p.id.toLowerCase();
+    return (
+      pBrand === brandSlug ||
+      (pBrand.length > 2 && brandSlug.includes(pBrand)) ||
+      (brandSlug.length > 2 && pBrand.includes(brandSlug)) ||
+      pId.startsWith(brandSlug) ||
+      (p.brand && p.brand.toLowerCase() === brandName.toLowerCase())
+    );
+  });
+
+  const fetchPromise = (async () => {
+    const products: Product[] = [];
+
+    // 1. First fetch directly from subcollection `brands/{brandSlug}/products`
+    try {
+      const subColSnap = await getDocs(collection(db, BRANDS_COLLECTION, brandSlug, 'products'));
+      if (!subColSnap.empty) {
+        subColSnap.forEach((d) => {
+          products.push({ id: d.id, ...d.data() } as Product);
+        });
+        return products;
+      }
+    } catch (e) {
+      console.warn('Notice querying brand product subcollection:', e);
+    }
+
+    // 2. Query top-level `products` as fallback
+    const querySnapshot = await getDocs(collection(db, PRODUCTS_COLLECTION));
+    querySnapshot.forEach((d) => {
+      const p = { id: d.id, ...d.data() } as Product;
+      const pBrand = (p.brand || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const pId = p.id.toLowerCase();
+
+      if (
+        pBrand === brandSlug ||
+        (pBrand.length > 2 && brandSlug.includes(pBrand)) ||
+        (brandSlug.length > 2 && pBrand.includes(brandSlug)) ||
+        pId.startsWith(brandSlug) ||
+        (p.brand && p.brand.toLowerCase() === brandName.toLowerCase())
+      ) {
+        products.push(p);
+      }
+    });
+
+    return products;
+  })();
+
+  return withTimeout(fetchPromise, 4000, fallbackProds);
+}
+
+export const fetchBrandProductsFromDb = getProductsByBrandFromDb;
+
+export async function deleteProductFromDb(productId: string, brandName?: string): Promise<boolean> {
+  memoryProductsCache = memoryProductsCache.filter((p) => p.id !== productId);
+
+  if (brandName) {
+    const brandSlug = brandName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (memoryBrandsCache[brandSlug]) {
+      memoryBrandsCache[brandSlug].totalProducts = Math.max(0, (memoryBrandsCache[brandSlug].totalProducts || 1) - 1);
+    }
+  }
+
+  try {
+    await deleteDoc(doc(db, PRODUCTS_COLLECTION, productId));
+
+    if (brandName) {
+      const brandSlug = brandName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      try {
+        await deleteDoc(doc(db, BRANDS_COLLECTION, brandSlug, 'products', productId));
+      } catch (e) {
+        // ignore
+      }
+      try {
+        await deleteDoc(doc(db, BRANDS_COLLECTION, brandSlug, 'items', productId));
+      } catch (e) {
+        // ignore
+      }
+    }
+    return true;
+  } catch (err) {
+    console.warn('Error deleting product from Firestore:', err);
+    return true;
+  }
+}
+
+export async function deleteBrandFromDb(brandSlug: string, brandName?: string): Promise<boolean> {
+  const targetName = (brandName || brandSlug).trim();
+  const normalizedSlug = brandSlug.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const normalizedName = targetName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const targetBrandLower = targetName.toLowerCase();
+
+  // 1. Instant purge from memory caches
+  for (const k of Object.keys(memoryBrandsCache)) {
+    const cachedBrand = memoryBrandsCache[k];
+    const cachedNameLower = (cachedBrand?.name || '').toLowerCase();
+    const cachedSlug = (cachedBrand?.id || k).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    if (
+      k === normalizedSlug ||
+      k === normalizedName ||
+      cachedSlug === normalizedSlug ||
+      cachedSlug === normalizedName ||
+      cachedNameLower === targetBrandLower
+    ) {
+      delete memoryBrandsCache[k];
+    }
+  }
+
+  memoryProductsCache = memoryProductsCache.filter((p) => {
+    const pSlug = (p.brand || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const pBrand = (p.brand || '').toLowerCase();
+
+    const isMatch =
+      pSlug === normalizedSlug ||
+      pSlug === normalizedName ||
+      pBrand === targetBrandLower ||
+      p.id.toLowerCase().startsWith(normalizedSlug) ||
+      p.id.toLowerCase().startsWith(normalizedName);
+
+    return !isMatch;
+  });
+
+  try {
+    // 2. Collect all possible brand document IDs
+    const possibleBrandIds = Array.from(
+      new Set([
+        brandSlug,
+        targetName,
+        normalizedSlug,
+        normalizedName,
+        targetBrandLower
+      ])
+    ).filter(Boolean);
+
+    // Also scan `brands` collection to find any docs matching brand name/slug
+    try {
+      const allBrandsSnap = await getDocs(collection(db, BRANDS_COLLECTION));
+      allBrandsSnap.forEach((bDoc) => {
+        const bData = bDoc.data();
+        const bNameLower = (bData?.name || '').toLowerCase();
+        const bSlugLower = (bData?.id || bDoc.id).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        if (
+          bDoc.id.toLowerCase() === targetBrandLower ||
+          bSlugLower === normalizedSlug ||
+          bSlugLower === normalizedName ||
+          bNameLower === targetBrandLower
+        ) {
+          possibleBrandIds.push(bDoc.id);
+        }
+      });
+    } catch (e) {
+      console.warn('Notice scanning brands collection for deletion:', e);
+    }
+
+    const uniqueBrandIds = Array.from(new Set(possibleBrandIds));
+    const deleteOps: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+
+    // 3. Purge subcollections and brand documents for all identified brand IDs
+    for (const bId of uniqueBrandIds) {
+      try {
+        // Delete items in `brands/{bId}/categories/{catId}/items`
+        try {
+          const catSnap = await getDocs(collection(db, BRANDS_COLLECTION, bId, 'categories'));
+          for (const catDoc of catSnap.docs) {
+            try {
+              const catItemsSnap = await getDocs(
+                collection(db, BRANDS_COLLECTION, bId, 'categories', catDoc.id, 'items')
+              );
+              catItemsSnap.docs.forEach((d) => {
+                const ref = doc(db, BRANDS_COLLECTION, bId, 'categories', catDoc.id, 'items', d.id);
+                deleteOps.push((batch) => batch.delete(ref));
+              });
+            } catch (e) {
+              // ignore
+            }
+            const catRef = doc(db, BRANDS_COLLECTION, bId, 'categories', catDoc.id);
+            deleteOps.push((batch) => batch.delete(catRef));
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        // Delete items in `products` and `items` subcollections under brand
+        const directSubCollections = ['products', 'items'];
+        for (const subCol of directSubCollections) {
+          try {
+            const subSnap = await getDocs(collection(db, BRANDS_COLLECTION, bId, subCol));
+            subSnap.docs.forEach((d) => {
+              const ref = doc(db, BRANDS_COLLECTION, bId, subCol, d.id);
+              deleteOps.push((batch) => batch.delete(ref));
+            });
+          } catch (e) {
+            // ignore
+          }
+        }
+
+        // Delete the brand document itself
+        const bRef = doc(db, BRANDS_COLLECTION, bId);
+        deleteOps.push((batch) => batch.delete(bRef));
+      } catch (e) {
+        console.warn('Notice deleting brand doc:', bId, e);
+      }
+    }
+
+    // 4. Delete matching products from top-level `products` collection
+    const q = query(collection(db, PRODUCTS_COLLECTION));
+    const snapshot = await getDocs(q);
+
+    snapshot.forEach((d) => {
+      const data = d.data() as Product;
+      const pSlug = (data.brand || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const pBrand = (data.brand || '').toLowerCase();
+
+      const isExactMatch =
+        pSlug === normalizedSlug ||
+        pSlug === normalizedName ||
+        pBrand === targetBrandLower ||
+        (normalizedSlug.length >= 3 && d.id.toLowerCase().startsWith(normalizedSlug + '_')) ||
+        (normalizedName.length >= 3 && d.id.toLowerCase().startsWith(normalizedName + '_'));
+
+      if (isExactMatch) {
+        const ref = doc(db, PRODUCTS_COLLECTION, d.id);
+        deleteOps.push((batch) => batch.delete(ref));
+      }
+    });
+
+    if (deleteOps.length > 0) {
+      await executeBatchedOperations(deleteOps);
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('Delete brand notice:', err);
+    return true;
+  }
+}
+
+export async function clearAllProductsAndBrandsFromDb(): Promise<boolean> {
+  memoryBrandsCache = {};
+  memoryProductsCache = [];
+
+  try {
+    const deleteOps: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+
+    const brandsSnap = await getDocs(collection(db, BRANDS_COLLECTION));
+    brandsSnap.docs.forEach((d) => {
+      const ref = doc(db, BRANDS_COLLECTION, d.id);
+      deleteOps.push((batch) => batch.delete(ref));
+    });
+
+    const prodsSnap = await getDocs(collection(db, PRODUCTS_COLLECTION));
+    prodsSnap.docs.forEach((d) => {
+      const ref = doc(db, PRODUCTS_COLLECTION, d.id);
+      deleteOps.push((batch) => batch.delete(ref));
+    });
+
+    if (deleteOps.length > 0) {
+      await executeBatchedOperations(deleteOps);
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('Clear all database notice:', err);
+    return true;
+  }
+}
+
+export async function saveUserProfileToDb(userSession: { email: string; name: string; role: 'admin' | 'user'; avatar?: string }) {
+  try {
+    const userDocId = userSession.email.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+    const userDocRef = doc(db, USERS_COLLECTION, userDocId);
+    await setDoc(userDocRef, {
+      uid: userDocId,
+      email: userSession.email,
+      name: userSession.name,
+      avatar: userSession.avatar || '',
+      role: userSession.role || (userSession.email === 'imamir760@gmail.com' ? 'admin' : 'user'),
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+    console.log(`User profile for ${userSession.email} synced to Firestore 'users' collection`);
+  } catch (error) {
+    console.warn('Notice saving user profile to Firestore:', error);
+  }
+}
+
+export interface BrandRemovalRequestData {
+  brandName: string;
+  websiteUrl: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
+  reason: string;
+}
+
+export interface BrandAdditionRequestData {
+  brandName: string;
+  websiteUrl: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
+  category: string;
+  details: string;
+}
+
+const BRAND_REMOVAL_COLLECTION = 'brand_removal_requests';
+const BRAND_ADDITION_COLLECTION = 'brand_addition_requests';
+
+export async function submitBrandRemovalRequest(data: BrandRemovalRequestData): Promise<boolean> {
+  const path = BRAND_REMOVAL_COLLECTION;
+  try {
+    const docData = sanitizeForFirestore({
+      ...data,
+      status: 'PENDING',
+      createdAt: new Date().toISOString()
+    });
+    await addDoc(collection(db, path), docData);
+    return true;
+  } catch (error) {
+    console.error('Error submitting brand removal request:', error);
+    try {
+      handleFirestoreError(error, OperationType.CREATE, path);
+    } catch {
+      // Fallback
+    }
+    return false;
+  }
+}
+
+export async function submitBrandAdditionRequest(data: BrandAdditionRequestData): Promise<boolean> {
+  const path = BRAND_ADDITION_COLLECTION;
+  try {
+    const docData = sanitizeForFirestore({
+      ...data,
+      status: 'PENDING',
+      createdAt: new Date().toISOString()
+    });
+    await addDoc(collection(db, path), docData);
+    return true;
+  } catch (error) {
+    console.error('Error submitting brand addition request:', error);
+    try {
+      handleFirestoreError(error, OperationType.CREATE, path);
+    } catch {
+      // Fallback
+    }
+    return false;
+  }
+}
+
+

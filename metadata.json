@@ -1,0 +1,6 @@
+{
+  "name": "ShopScoper",
+  "description": "Smart D2C Product Discovery & Direct Brand Savings Engine.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

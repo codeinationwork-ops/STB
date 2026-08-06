@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "products": {
+      "title": "Products",
+      "description": "Direct D2C Brand Catalog",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "brand": { "type": "string" },
+        "directPrice": { "type": "number" },
+        "marketplacePrice": { "type": "number" },
+        "category": { "type": "string" },
+        "rating": { "type": "number" },
+        "reviewsCount": { "type": "number" },
+        "inStock": { "type": "boolean" },
+        "images": { "type": "array", "items": { "type": "string" } },
+        "description": { "type": "string" },
+        "specs": { "type": "array" }
+      },
+      "required": ["name", "brand", "directPrice", "marketplacePrice", "category"]
+    },
+    "users": {
+      "title": "User Profile",
+      "description": "Authenticated user profiles stored from Google Auth",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "avatar": { "type": "string" },
+        "role": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["uid", "email", "name"]
+    },
+    "wishlists": {
+      "title": "Wishlist",
+      "description": "User Wishlist items",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "productId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "productId"]
+    },
+    "searches": {
+      "title": "Search History",
+      "description": "Logged AI search queries",
+      "type": "object",
+      "properties": {
+        "query": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "brand_removal_requests": {
+      "title": "Brand Removal Requests",
+      "description": "Requests from brand owners to remove their brand listing",
+      "type": "object",
+      "properties": {
+        "brandName": { "type": "string" },
+        "websiteUrl": { "type": "string" },
+        "contactName": { "type": "string" },
+        "contactEmail": { "type": "string" },
+        "contactPhone": { "type": "string" },
+        "reason": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["brandName", "contactEmail", "contactName"]
+    },
+    "brand_addition_requests": {
+      "title": "Brand Addition Requests",
+      "description": "Requests from brand owners to add/list their brand",
+      "type": "object",
+      "properties": {
+        "brandName": { "type": "string" },
+        "websiteUrl": { "type": "string" },
+        "contactName": { "type": "string" },
+        "contactEmail": { "type": "string" },
+        "contactPhone": { "type": "string" },
+        "category": { "type": "string" },
+        "details": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["brandName", "websiteUrl", "contactEmail", "contactName"]
+    }
+  }
+}
