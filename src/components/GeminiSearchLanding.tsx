@@ -1545,48 +1545,6 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
         }}
       />
 
-      {/* FOOTER: With Brand Removal & Brand Addition Request Buttons */}
-      <footer className="mt-12 py-6 px-4 border-t border-purple-100 bg-white text-slate-500 text-xs font-mono relative z-20">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <span>© 2026 ShopScoper AI Inc. All rights reserved.</span>
-          </div>
-
-          {/* Brand Requests Links */}
-          <div className="flex items-center gap-4 flex-wrap justify-center">
-            <button
-              onClick={() => setAdditionModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-purple-50 hover:bg-purple-100 text-[#6C3BFF] font-bold text-xs transition-colors cursor-pointer"
-            >
-              <PlusCircle className="w-3.5 h-3.5" />
-              <span>Add My Brand</span>
-            </button>
-
-            <span className="text-slate-300">•</span>
-
-            <button
-              onClick={() => setRemovalModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-50 hover:bg-red-100 text-red-600 font-bold text-xs transition-colors cursor-pointer"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Remove Your Brand</span>
-            </button>
-
-            <span className="text-slate-300">•</span>
-
-            <span className="text-slate-400">Virtual Try-On Enabled</span>
-          </div>
-        </div>
-      </footer>
-
-      {/* Brand Request Modals */}
-      <BrandRequestModals
-        removalOpen={removalModalOpen}
-        additionOpen={additionModalOpen}
-        onCloseRemoval={() => setRemovalModalOpen(false)}
-        onCloseAddition={() => setAdditionModalOpen(false)}
-      />
-
     </div>
   );
 };

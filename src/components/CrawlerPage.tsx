@@ -1121,22 +1121,6 @@ export const CrawlerPage: React.FC<CrawlerPageProps> = ({
 
       </main>
 
-      {/* Footer Badge */}
-      <footer className="border-t border-slate-200 bg-white py-4 px-6 text-center text-xs text-slate-500 font-mono">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span className="flex items-center gap-1.5 text-red-700 font-bold">
-            <ShieldCheck className="w-4 h-4 text-red-600" />
-            SkipToBuy 100% Full Catalog Ingestion & Brand Database Sync Active
-          </span>
-          <button
-            onClick={onBackToHome}
-            className="text-red-600 hover:underline font-bold"
-          >
-            Return to Main Search Index →
-          </button>
-        </div>
-      </footer>
-
       {/* Confirmation Modal for Brand Deletion */}
       <AnimatePresence>
         {brandToDelete && (
