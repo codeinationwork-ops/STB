@@ -162,9 +162,56 @@ export interface Product {
   colors?: ProductColor[];
   badge?: string;
   priceDropHistory?: { date: string; directPrice: number; marketplacePrice: number }[];
-  gender?: 'Men' | 'Women' | 'Unisex';
+  gender?: 'Men' | 'Women' | 'Unisex' | 'N/A';
+  // Optional Shopify Direct Checkout & Pricing Sync attributes
+  price?: number;
+  variant_id?: string | number;
+  store_domain?: string;
+  cart_permalink?: string;
+  compare_at_price?: number;
+  discount_percentage?: number;
+  price_dropped?: boolean;
+  previous_price?: number;
+  active_promo_code?: string;
+  promo_banner_found?: string;
   // Raw product doc attachment
   rawDoc?: ProductDoc;
+}
+
+export interface ShopifyStore {
+  id: string;
+  store_domain: string;
+  store_name: string;
+  api_key?: string;
+  access_token?: string;
+  status: 'active' | 'crawling' | 'error' | 'idle';
+  total_products: number;
+  last_scraped_at?: string;
+  created_at: string;
+  discount_code?: string;
+  notes?: string;
+}
+
+export interface ShopifyProduct {
+  id: string;
+  variant_id: string | number;
+  title: string;
+  description: string;
+  category: string;
+  images: string[];
+  price: number;
+  compare_at_price?: number | null;
+  discount_percentage: number;
+  store_domain: string;
+  cart_permalink: string;
+  vendor?: string;
+  gender?: 'Men' | 'Women' | 'Unisex' | 'N/A';
+  created_at?: string;
+  discount_code?: string;
+  price_dropped?: boolean;
+  previous_price?: number;
+  active_promo_code?: string;
+  promo_banner_found?: string;
 }
 
 export interface CategoryItem {

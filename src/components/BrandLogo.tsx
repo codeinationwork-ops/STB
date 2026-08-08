@@ -4,24 +4,23 @@ interface BrandLogoProps {
   className?: string;
   size?: 'sm' | 'md' | 'lg';
   variant?: 'default' | 'white' | 'dark';
-  scale?: '1.5' | '2.0' | '2.5' | '3.0' | string;
+  scale?: '1.0' | '1.2' | '1.5' | '2.0' | string;
 }
 
-export const BrandLogo: React.FC<BrandLogoProps> = ({ size = 'md', className = '', variant = 'default', scale = '2.0' }) => {
+export const BrandLogo: React.FC<BrandLogoProps> = ({ size = 'md', className = '', variant = 'default', scale = '1.0' }) => {
   const [hasError, setHasError] = useState(false);
 
   const heightClass = {
-    sm: 'h-9 sm:h-11',
-    md: 'h-12 sm:h-16',
-    lg: 'h-16 sm:h-24',
+    sm: 'h-7 sm:h-8',
+    md: 'h-8 sm:h-10',
+    lg: 'h-11 sm:h-14',
   }[size];
 
-  const scaleClass = {
-    '1.5': 'scale-[1.5] hover:scale-[1.55]',
-    '2.0': 'scale-[2.0] hover:scale-[2.05]',
-    '2.5': 'scale-[2.5] hover:scale-[2.55]',
-    '3.0': 'scale-[3.0] hover:scale-[3.05]',
-  }[scale] || `scale-[${scale}]`;
+  const scaleClass = scale && scale !== '1.0' ? {
+    '1.2': 'scale-[1.2]',
+    '1.5': 'scale-[1.5]',
+    '2.0': 'scale-[2.0]',
+  }[scale] || '' : '';
 
   const filterClass = variant === 'white' ? 'brightness-0 invert' : '';
 
@@ -44,7 +43,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({ size = 'md', className = '
   }
 
   return (
-    <div className={`inline-flex items-center justify-center select-none overflow-visible px-3 py-1 ${className}`}>
+    <div className={`inline-flex items-center justify-center select-none overflow-hidden ${className}`}>
       <img
         src="/Logo.png"
         onError={(e) => {
@@ -58,12 +57,13 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({ size = 'md', className = '
           }
         }}
         alt="ShopScoper Logo"
-        className={`${heightClass} w-auto object-contain transform origin-center transition-transform duration-200 ${scaleClass} ${filterClass}`}
+        className={`${heightClass} w-auto object-contain transition-transform duration-200 ${scaleClass} ${filterClass}`}
         loading="eager"
         decoding="async"
       />
     </div>
   );
 };
+
 
 

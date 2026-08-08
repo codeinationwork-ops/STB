@@ -84,6 +84,66 @@
         "createdAt": { "type": "string" }
       },
       "required": ["brandName", "websiteUrl", "contactEmail", "contactName"]
+    },
+    "shopify_stores": {
+      "title": "Shopify Stores",
+      "description": "Registered Shopify stores connected for product scraping and API integration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "store_domain": { "type": "string" },
+        "store_name": { "type": "string" },
+        "api_key": { "type": "string" },
+        "access_token": { "type": "string" },
+        "status": { "type": "string" },
+        "total_products": { "type": "number" },
+        "last_scraped_at": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["store_domain", "store_name"]
+    },
+    "shopify_products": {
+      "title": "Shopify Products",
+      "description": "Scraped product items from Shopify .json endpoints with variant IDs and discount calculation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "variant_id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "images": { "type": "array" },
+        "price": { "type": "number" },
+        "compare_at_price": { "type": "number" },
+        "discount_percentage": { "type": "number" },
+        "store_domain": { "type": "string" },
+        "cart_permalink": { "type": "string" },
+        "vendor": { "type": "string" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["title", "price", "store_domain", "variant_id"]
+    }
+  },
+  "firestore": {
+    "products": {
+      "schema": "products",
+      "description": "Master products collection"
+    },
+    "users": {
+      "schema": "users",
+      "description": "User profiles"
+    },
+    "wishlists": {
+      "schema": "wishlists",
+      "description": "User wishlists"
+    },
+    "shopify_stores": {
+      "schema": "shopify_stores",
+      "description": "Connected Shopify stores database"
+    },
+    "shopify_products": {
+      "schema": "shopify_products",
+      "description": "Harvested Shopify products collection"
     }
   }
 }

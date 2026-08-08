@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Zap, Heart, ShieldCheck, ShoppingBag, Sparkles, SlidersHorizontal, MapPin, ChevronDown, Bell, Bot, Globe } from 'lucide-react';
+import { Search, Zap, Heart, ShieldCheck, ShoppingBag, Sparkles, SlidersHorizontal, MapPin, ChevronDown, Bell, Bot, Globe, Store } from 'lucide-react';
 import { UserAddress } from '../types';
 import { BrandLogo } from './BrandLogo';
 
@@ -138,6 +138,18 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
               </div>
             </motion.div>
+
+            {/* Shopify Connect Button */}
+            <motion.button
+              onClick={onOpenCrawler}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#18181B] hover:bg-slate-800 border border-[#27272A] hover:border-emerald-500/50 text-emerald-400 font-mono font-bold text-xs transition-all cursor-pointer shadow-md"
+              title="Connect & Scrape Shopify Store"
+            >
+              <Store className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">Shopify Connect</span>
+            </motion.button>
 
             {/* GPT TryOn Button */}
             {onOpenGptTryOn && (

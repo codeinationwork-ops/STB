@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Sparkles,
   ArrowRight,
@@ -12,10 +12,13 @@ import {
   Globe,
   PlusCircle,
   Trash2,
-  ShieldCheck
+  ShieldCheck,
+  Store,
+  X
 } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
 import { BrandRequestModals } from './BrandRequestModals';
+import { ShopifyStoresPage } from './ShopifyStoresPage';
 
 interface LandingPageProps {
   onNavigateLogin: () => void;
@@ -35,6 +38,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const [selectedBrandCategory, setSelectedBrandCategory] = useState<string>('All');
   const [removalModalOpen, setRemovalModalOpen] = useState(false);
   const [additionModalOpen, setAdditionModalOpen] = useState(false);
+  const [isShopifyConnectOpen, setIsShopifyConnectOpen] = useState(false);
 
   // Direct D2C & High-Street Apparel Brands Catalog (Commercial marketplaces removed)
   const brandCatalog = [
@@ -218,6 +222,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
         {/* Action Button */}
         <div className="flex items-center gap-2.5 shrink-0">
+          <button
+            onClick={() => setIsShopifyConnectOpen(true)}
+            className="h-[38px] sm:h-[42px] px-3.5 sm:px-4.5 rounded-full bg-slate-900 hover:bg-slate-800 text-emerald-400 font-mono font-bold text-xs sm:text-sm border border-slate-700 hover:border-emerald-500/50 shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
+            title="Connect & Scrape Shopify Brand Store"
+          >
+            <Store className="w-4 h-4 text-emerald-400" />
+            <span>Shopify Connect</span>
+          </button>
+
           {isAuthenticated ? (
             <button
               onClick={onNavigateExplore}
@@ -286,6 +299,39 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               Direct Store Prices &amp; Links
             </span>
           </div>
+
+          {/* SHOPIFY CONNECT HOMEPAGE HERO CONNECTOR CARD */}
+          <motion.div
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            onClick={() => setIsShopifyConnectOpen(true)}
+            className="w-full max-w-2xl mx-auto mt-2 p-4 sm:p-5 rounded-2xl bg-slate-950 border border-emerald-500/40 hover:border-emerald-400 shadow-xl shadow-emerald-950/20 hover:shadow-emerald-950/40 transition-all duration-300 cursor-pointer text-left group relative overflow-hidden"
+          >
+            {/* Ambient Background Radial Glow */}
+            <div className="absolute -right-8 -bottom-8 w-36 h-36 bg-emerald-500/20 rounded-full blur-2xl group-hover:bg-emerald-500/30 transition-all pointer-events-none" />
+
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 relative z-10">
+              <div className="flex items-center gap-3.5">
+                <div className="w-11 h-11 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0 text-emerald-400 group-hover:scale-110 transition-transform">
+                  <Store className="w-6 h-6 text-emerald-400" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wider">Shopify Connect</span>
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">D2C Live Scraper</span>
+                  </div>
+                  <h3 className="text-sm sm:text-base font-bold text-white mt-0.5">Connect & Scrape Any Shopify Store</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">Harvest items live, classify Men/Women/Unisex, & enable direct checkout on <strong className="text-slate-200">/</strong></p>
+                </div>
+              </div>
+
+              <button className="w-full sm:w-auto px-4.5 py-2.5 rounded-xl bg-emerald-500 group-hover:bg-emerald-400 text-slate-950 font-mono font-extrabold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 shrink-0 transition-all">
+                <span>Launch Connector</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </motion.div>
         </motion.div>
 
         {/* Animated Main Hero Try-On & Collection Cards Grid */}
@@ -374,7 +420,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <div className="my-3 flex justify-center items-center h-[150px] relative">
               <div className="absolute w-32 h-32 rounded-full bg-blue-50/80 -z-0 group-hover:scale-110 transition-transform duration-500" />
               <img
-                src="/male_ss.png"
+                src="/male_SS.png"
                 alt="Men's Fashion India"
                 className="relative z-10 max-h-[140px] object-contain group-hover:scale-108 transition-transform duration-300 filter drop-shadow-md"
                 referrerPolicy="no-referrer"
@@ -598,6 +644,28 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         onCloseRemoval={() => setRemovalModalOpen(false)}
         onCloseAddition={() => setAdditionModalOpen(false)}
       />
+
+      {/* Shopify Connect Modal */}
+      <AnimatePresence>
+        {isShopifyConnectOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-6 overflow-y-auto"
+          >
+            <div className="relative w-full max-w-6xl max-h-[92vh] overflow-y-auto bg-slate-950 border border-slate-800 rounded-3xl p-4 sm:p-6 shadow-2xl">
+              <button
+                onClick={() => setIsShopifyConnectOpen(false)}
+                className="absolute top-4 right-4 z-10 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <ShopifyStoresPage />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

@@ -162,7 +162,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             <div className="flex items-baseline justify-between">
               <div>
                 <span className="text-[10px] text-emerald-400 font-mono font-bold uppercase tracking-widest block">
-                  Official Brand Price
+                  Official Direct Price
                 </span>
                 <span className="text-xl font-black font-mono text-white tracking-tight">
                   ₹{product.directPrice.toLocaleString('en-IN')}
@@ -171,27 +171,37 @@ export const ProductCard: React.FC<ProductCardProps> = ({
 
               <div className="text-right">
                 <span className="text-[10px] text-zinc-500 font-mono uppercase tracking-widest block line-through">
-                  {product.marketplaceName} Price
+                  Original / Compare Price
                 </span>
                 <span className="text-sm font-bold font-mono text-zinc-500 line-through">
-                  ₹{product.marketplacePrice.toLocaleString('en-IN')}
+                  ₹{(product.compare_at_price || product.marketplacePrice).toLocaleString('en-IN')}
                 </span>
               </div>
             </div>
 
-            {/* Coupon Voucher Bar if available */}
-            {product.couponCode && (
+            {/* Price Drop Indicator */}
+            {(product.price_dropped || (product.compare_at_price && product.compare_at_price > product.directPrice)) && (
+              <div className="px-2 py-1 rounded bg-rose-500/20 text-rose-400 text-[11px] font-mono font-bold border border-rose-500/30 flex items-center gap-1">
+                <span>🔥 Price Dropped</span>
+                {product.previous_price && (
+                  <span className="text-zinc-400 font-normal">(Was ₹{product.previous_price.toLocaleString('en-IN')})</span>
+                )}
+              </div>
+            )}
+
+            {/* Active Auto-Apply Promo Code Badge */}
+            {(product.active_promo_code || product.couponCode) && (
               <div className="pt-1 flex items-center justify-between border-t border-[#27272A] text-xs">
-                <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px]">
-                  <Zap className="w-3 h-3 fill-emerald-400" />
-                  <span>Code: <strong>{product.couponCode}</strong></span>
+                <div className="flex items-center gap-1.5 text-indigo-400 font-mono text-[11px]">
+                  <Zap className="w-3 h-3 fill-indigo-400" />
+                  <span>Use code <strong>{product.active_promo_code || product.couponCode}</strong> at checkout</span>
                 </div>
                 <button
                   onClick={handleCopyCoupon}
-                  className="px-2 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono flex items-center gap-1 transition-colors"
+                  className="px-2 py-0.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-mono flex items-center gap-1 transition-colors cursor-pointer"
                 >
                   {copiedCoupon ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                  {copiedCoupon ? 'Copied!' : 'Copy Token'}
+                  {copiedCoupon ? 'Copied!' : 'Copy Code'}
                 </button>
               </div>
             )}
@@ -256,12 +266,36 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.97 }}
-            onClick={() => onExpressBuy(product)}
-            className="w-full relative overflow-hidden rounded-xl bg-gradient-to-r from-emerald-500 via-emerald-600 to-teal-500 p-3 text-black font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 transition-all duration-300"
+            onClick={() => {
+              const bestCode = (product.active_promo_code || product.couponCode || '').trim();
+              if (product.cart_permalink) {
+                let checkoutUrl = product.cart_permalink;
+                if (bestCode && !checkoutUrl.includes('/discount/')) {
+                  const storeDom = product.store_domain || product.officialUrl || '';
+                  const cleanDom = storeDom.startsWith('http') ? storeDom : `https://${storeDom}`;
+                  const varId = product.variant_id;
+                  if (varId) {
+                    checkoutUrl = `${cleanDom}/discount/${encodeURIComponent(bestCode)}?redirect=/cart/${varId}:1`;
+                  } else if (!checkoutUrl.includes('discount=')) {
+                    checkoutUrl += (checkoutUrl.includes('?') ? '&' : '?') + `discount=${encodeURIComponent(bestCode)}`;
+                  }
+                }
+                window.open(checkoutUrl, '_blank');
+              } else if (product.store_domain && product.variant_id) {
+                const storeDom = product.store_domain.startsWith('http') ? product.store_domain : `https://${product.store_domain}`;
+                const checkoutUrl = bestCode
+                  ? `${storeDom}/discount/${encodeURIComponent(bestCode)}?redirect=/cart/${product.variant_id}:1`
+                  : `${storeDom}/cart/${product.variant_id}:1?checkout`;
+                window.open(checkoutUrl, '_blank');
+              } else {
+                onExpressBuy(product);
+              }
+            }}
+            className="w-full relative overflow-hidden rounded-xl bg-gradient-to-r from-emerald-500 via-emerald-600 to-teal-500 p-3 text-black font-extrabold text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 transition-all duration-300 cursor-pointer"
           >
             <div className="absolute inset-0 bg-white/20 opacity-0 hover:opacity-100 transition-opacity"></div>
             <Zap className="w-4 h-4 fill-black stroke-[2.5]" />
-            <span>⚡ Buy Direct (1-Click Express)</span>
+            <span>{(product.cart_permalink || product.variant_id) ? '⚡ Direct Shopify Checkout (Discount Auto-Applied)' : '⚡ Buy Direct (1-Click Express)'}</span>
             <ArrowUpRight className="w-4 h-4 ml-auto stroke-[2.5]" />
           </motion.button>
 

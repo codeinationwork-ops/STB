@@ -19,7 +19,9 @@ import {
   CategoryDoc,
   ProductDoc,
   CrawlLogDoc,
-  SearchLogDoc
+  SearchLogDoc,
+  ShopifyStore,
+  ShopifyProduct
 } from '../types';
 
 const PRODUCTS_COLLECTION = 'products';
@@ -103,10 +105,13 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
 // Batched operations runner with rate limiting and retry logic to prevent write stream exhaustion in Firestore
 async function executeBatchedOperations(
-  operations: Array<(batch: ReturnType<typeof writeBatch>) => void>
+  operations: Array<(batch: ReturnType<typeof writeBatch>) => void>,
+  onProgress?: (committedCount: number, totalCount: number) => void
 ): Promise<void> {
   if (operations.length === 0) return;
-  const BATCH_SIZE = 150; // Keep batch size conservative to prevent write stream overflow
+  const BATCH_SIZE = 100; // Keep batch size conservative to prevent write stream overflow
+  if (onProgress) onProgress(0, operations.length);
+
   for (let i = 0; i < operations.length; i += BATCH_SIZE) {
     const chunk = operations.slice(i, i + BATCH_SIZE);
     const batch = writeBatch(db);
@@ -129,8 +134,13 @@ async function executeBatchedOperations(
       }
     }
 
+    const completed = Math.min(i + chunk.length, operations.length);
+    if (onProgress) {
+      onProgress(completed, operations.length);
+    }
+
     // Small delay between batches to allow client SDK write streams to flush cleanly
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
 
@@ -597,13 +607,38 @@ const DEPRECATED_DEMO_PRODUCTS: Product[] = [
 let memoryProductsCache: Product[] = [];
 let memoryBrandsCache: Record<string, BrandSummary> = {};
 
+export function safeNumber(val: any, fallback = 0): number {
+  if (val === null || val === undefined) return fallback;
+  if (typeof val === 'number') {
+    return isNaN(val) || !isFinite(val) ? fallback : val;
+  }
+  if (typeof val === 'string') {
+    const cleaned = val.replace(/[^0-9.]/g, '');
+    if (!cleaned) return fallback;
+    const parsed = parseFloat(cleaned);
+    return isNaN(parsed) || !isFinite(parsed) ? fallback : parsed;
+  }
+  return fallback;
+}
+
 export function mapDocToProduct(d: { id: string; data: () => any }): Product {
   const data = d.data();
   const title = data.title || data.name || 'D2C Product';
   const brand = data.brand_name || data.brand || 'D2C Brand';
-  const category = data.category_name || data.category || 'Streetwear & Apparel';
-  const directPrice = data.pricing?.direct_price ?? data.directPrice ?? 1299;
-  const marketplacePrice = data.pricing?.marketplace_price ?? data.marketplacePrice ?? Math.round(directPrice * 1.3);
+  const rawCategory = data.product_type || data.category_name || data.category || 'Streetwear & Apparel';
+  const category = String(rawCategory).trim() || 'Streetwear & Apparel';
+
+  const directPrice = safeNumber(data.pricing?.direct_price) ||
+                      safeNumber(data.directPrice) ||
+                      safeNumber(data.price) ||
+                      1299;
+
+  const rawCompareAt = safeNumber(data.pricing?.marketplace_price) ||
+                       safeNumber(data.marketplacePrice) ||
+                       safeNumber(data.compare_at_price);
+
+  const marketplacePrice = rawCompareAt > directPrice ? rawCompareAt : Math.round(directPrice * 1.35);
+
   const images = data.media?.gallery_images || data.images || (data.media?.primary_image ? [data.media.primary_image] : ['https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=800']);
   const specs = data.normalized_specs || data.specs || [];
   const officialUrl = data.canonical_product_url || data.officialUrl || '';
@@ -639,7 +674,7 @@ export function mapDocToProduct(d: { id: string; data: () => any }): Product {
     category,
     directPrice,
     marketplacePrice,
-    marketplaceName: data.marketplaceName || `${brand} Direct vs Marketplace (30% Markup)`,
+    marketplaceName: data.marketplaceName || `${brand} Direct vs Marketplace (Saved ${Math.round(((marketplacePrice - directPrice) / Math.max(1, marketplacePrice)) * 100)}%)`,
     images,
     specs,
     stockLeft: data.status?.in_stock !== false ? (data.stockLeft ?? 12) : 0,
@@ -652,7 +687,88 @@ export function mapDocToProduct(d: { id: string; data: () => any }): Product {
     description: data.description || `Official product from ${brand}`,
     lastUpdated: data.updated_at || data.lastUpdated || new Date().toISOString(),
     gender,
+    variant_id: data.variant_id,
+    store_domain: data.store_domain,
+    cart_permalink: data.cart_permalink,
+    price: directPrice,
+    compare_at_price: marketplacePrice,
     rawDoc: data as ProductDoc
+  };
+}
+
+export function mapShopifyProductToProduct(sp: any, docId?: string): Product {
+  const id = String(sp.id || sp.variant_id || docId || `sp_${Math.random().toString(36).substring(2, 9)}`);
+  const name = sp.title || sp.name || 'Shopify Product';
+  const rawBrand = sp.vendor || sp.brand_name || sp.brand || (sp.store_domain ? sp.store_domain.replace(/^https?:\/\//, '').split('.')[0] : 'Shopify Direct');
+  const capitalizedBrand = rawBrand ? rawBrand.charAt(0).toUpperCase() + rawBrand.slice(1) : 'D2C Brand';
+  
+  const rawCategory = sp.product_type || sp.category || sp.category_name || (Array.isArray(sp.tags) ? sp.tags.join(' ') : sp.tags) || 'Apparel & Fashion';
+  const category = String(rawCategory).trim() || 'Apparel & Fashion';
+  
+  const directPrice = safeNumber(sp.directPrice) ||
+                      safeNumber(sp.price) ||
+                      safeNumber(sp.pricing?.direct_price) ||
+                      safeNumber(sp.variants?.[0]?.price) ||
+                      1299;
+
+  const rawCompareAt = safeNumber(sp.compare_at_price) ||
+                       safeNumber(sp.marketplacePrice) ||
+                       safeNumber(sp.pricing?.marketplace_price) ||
+                       safeNumber(sp.variants?.[0]?.compare_at_price);
+
+  const marketplacePrice = rawCompareAt > directPrice ? rawCompareAt : Math.round(directPrice * 1.35);
+
+  const images = Array.isArray(sp.images) && sp.images.length > 0 
+    ? sp.images 
+    : (sp.media?.gallery_images || (sp.image ? [sp.image] : ['https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=800']));
+
+  const domainClean = sp.store_domain ? sp.store_domain.replace(/^https?:\/\//, '').split('/')[0] : '';
+  const officialUrl = sp.officialUrl || sp.cart_permalink || (domainClean ? `https://${domainClean}` : '');
+
+  const rawGender = sp.gender || sp.target_gender || sp.audience;
+  let gender: 'Men' | 'Women' | 'Unisex' = 'Unisex';
+  if (rawGender === 'Men' || rawGender === 'Women' || rawGender === 'Unisex') {
+    gender = rawGender;
+  } else {
+    const text = `${name} ${category} ${sp.description || ''}`.toLowerCase();
+    const hasWomen = /\b(women|womens|women's|female|ladies|lady|girl|girls|dress|dresses|skirt|crop|bra|bras|leggings|gown|saree|sari|lehenga|kurti|bikini|monokini|camisole|frock|corset|blouse|midi|maxi|bodycon)\b/i.test(text);
+    const hasMen = /\b(men|mens|men's|male|guys|boy|boys|boxer|boxers|trunks|sherwani|vest|chinos|briefs|suit|tuxedo)\b/i.test(text);
+    if (hasWomen && !hasMen) gender = 'Women';
+    else if (hasMen && !hasWomen) gender = 'Men';
+    else gender = 'Unisex';
+  }
+
+  const tagsText = Array.isArray(sp.tags) ? sp.tags.join(', ') : (typeof sp.tags === 'string' ? sp.tags : '');
+
+  return {
+    id,
+    name,
+    brand: capitalizedBrand,
+    category,
+    directPrice,
+    marketplacePrice,
+    marketplaceName: `${capitalizedBrand} Direct vs Marketplace (Saved ${Math.round(((marketplacePrice - directPrice) / Math.max(1, marketplacePrice)) * 100)}%)`,
+    images,
+    specs: sp.specs || [
+      { label: 'Store Domain', value: domainClean || capitalizedBrand },
+      { label: 'Category / Type', value: category },
+      { label: 'Sync Status', value: 'Live Shopify Connection' },
+      ...(tagsText ? [{ label: 'Tags', value: tagsText }] : [])
+    ],
+    stockLeft: sp.stockLeft ?? 18,
+    rating: sp.rating ?? 4.9,
+    reviewsCount: sp.reviewsCount ?? 42,
+    trendingScore: sp.trendingScore ?? 98,
+    couponCode: sp.discount_code || sp.couponCode || `${capitalizedBrand.toUpperCase().replace(/[^A-Z0-9]/g, '')}10`,
+    couponDiscount: sp.discount_percentage || sp.couponDiscount || 10,
+    officialUrl,
+    description: sp.description || `${name} by ${capitalizedBrand}. ${category !== 'Apparel & Fashion' ? `Category: ${category}. ` : ''}Direct-from-brand product with instant checkout.`,
+    gender,
+    variant_id: sp.variant_id,
+    store_domain: domainClean,
+    cart_permalink: sp.cart_permalink,
+    price: directPrice,
+    compare_at_price: marketplacePrice
   };
 }
 
@@ -683,22 +799,27 @@ export async function purgeDemoDataFromDb(): Promise<number> {
 // 1. Fetch real-time products from Firestore
 export async function ensureProductsSeededToFirestore(): Promise<void> {
   try {
-    const qSnapshot = await getDocs(collection(db, PRODUCTS_COLLECTION));
+    const qSnapshot = await getDocs(collection(db, SHOPIFY_PRODUCTS_COLLECTION));
     if (qSnapshot.empty) {
-      console.log('Seeding initial products to Firestore products collection...');
+      console.log('Seeding initial products to Shopify products collection (shopify_products)...');
       const ops: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
       INITIAL_D2C_PRODUCTS.forEach((p) => {
-        const ref = doc(db, PRODUCTS_COLLECTION, p.id);
+        const docId = sanitizeDocId(`sp_${p.id}`);
+        const ref = doc(db, SHOPIFY_PRODUCTS_COLLECTION, docId);
         const docData = sanitizeForFirestore({
           id: p.id,
           title: p.name,
           name: p.name,
+          vendor: p.brand,
           brand: p.brand,
           brand_name: p.brand,
+          product_type: p.category,
           category: p.category,
           category_name: p.category,
           gender: p.gender || 'Unisex',
+          price: p.directPrice,
           directPrice: p.directPrice,
+          compare_at_price: p.marketplacePrice,
           marketplacePrice: p.marketplacePrice,
           marketplaceName: p.marketplaceName,
           images: p.images,
@@ -718,56 +839,26 @@ export async function ensureProductsSeededToFirestore(): Promise<void> {
       await executeBatchedOperations(ops);
     }
   } catch (err) {
-    console.warn('Notice seeding initial products to Firestore:', err);
+    console.warn('Notice seeding initial products to Shopify products collection:', err);
   }
 }
 
-// Helper to fetch all products across all brands from Firestore without hitting full collection 128MB query limit
+// Fetch all products exclusively from shopify_products collection
 export async function fetchAllProductsFromFirestore(): Promise<Product[]> {
   const itemsMap = new Map<string, Product>();
 
+  // Fetch directly and exclusively from shopify_products collection
   try {
-    const brandsSnapshot = await getDocs(collection(db, BRANDS_COLLECTION));
-    const brandIds = brandsSnapshot.docs.map((d) => d.id).filter(Boolean);
-
-    if (brandIds.length > 0) {
-      const brandQueries = brandIds.map(async (bId) => {
-        try {
-          const snap = await getDocs(
-            query(
-              collection(db, PRODUCTS_COLLECTION),
-              where('__name__', '>=', bId + '_'),
-              where('__name__', '<=', bId + '_\uf8ff'),
-              limit(200)
-            )
-          );
-          snap.forEach((d) => {
-            if (!d.id.startsWith('prod-') && !d.id.startsWith('demo-')) {
-              itemsMap.set(d.id, mapDocToProduct(d));
-            }
-          });
-        } catch (e) {
-          console.warn(`Notice fetching products for brand ${bId}:`, e);
-        }
-      });
-      await Promise.all(brandQueries);
-    }
+    const shopifySnapshot = await getDocs(collection(db, SHOPIFY_PRODUCTS_COLLECTION));
+    shopifySnapshot.forEach((d) => {
+      const spData = d.data();
+      if (spData && (spData.title || spData.name || spData.price)) {
+        const mapped = mapShopifyProductToProduct(spData, d.id);
+        itemsMap.set(mapped.id, mapped);
+      }
+    });
   } catch (err) {
-    console.warn('Notice fetching brands list for product query:', err);
-  }
-
-  // Fallback to safe limited query if brand prefix fetch produced no results
-  if (itemsMap.size === 0) {
-    try {
-      const safeSnapshot = await getDocs(query(collection(db, PRODUCTS_COLLECTION), limit(800)));
-      safeSnapshot.forEach((d) => {
-        if (!d.id.startsWith('prod-') && !d.id.startsWith('demo-')) {
-          itemsMap.set(d.id, mapDocToProduct(d));
-        }
-      });
-    } catch (err) {
-      console.warn('Notice reading products with limit fallback:', err);
-    }
+    console.warn('Notice reading shopify_products collection:', err);
   }
 
   if (itemsMap.size > 0) {
@@ -902,11 +993,17 @@ export async function saveProductToDb(product: Product): Promise<boolean> {
   }
 
   try {
-    const docRef = doc(db, PRODUCTS_COLLECTION, product.id);
-    await setDoc(docRef, {
+    const docRef = doc(db, SHOPIFY_PRODUCTS_COLLECTION, sanitizeDocId(`sp_${product.id}`));
+    await setDoc(docRef, sanitizeForFirestore({
       ...product,
+      title: product.name,
+      vendor: product.brand,
+      brand_name: product.brand,
+      product_type: product.category,
+      price: product.directPrice,
+      compare_at_price: product.marketplacePrice,
       lastUpdated: new Date().toISOString()
-    }, { merge: true });
+    }), { merge: true });
 
     // Also update/create brand entry and brand products subcollection
     if (product.brand) {
@@ -1166,9 +1263,9 @@ export async function upsertBrandProductsToDb(
 
         const cleanDocData = sanitizeForFirestore(productDocData);
 
-        // Save to top-level `products` collection
-        const docRef = doc(db, PRODUCTS_COLLECTION, prodDocId);
-        batch.set(docRef, cleanDocData, { merge: true });
+        // Save to `shopify_products` collection
+        const shopifyDocRef = doc(db, SHOPIFY_PRODUCTS_COLLECTION, sanitizeDocId(`sp_${prodDocId}`));
+        batch.set(shopifyDocRef, cleanDocData, { merge: true });
 
         // Save item to `brands/{brandSlug}/products/{productId}` subcollection
         const brandProdSubRef = doc(db, BRANDS_COLLECTION, brandSlug, 'products', prodDocId);
@@ -1293,34 +1390,37 @@ export async function getAllBrandsFromDb(): Promise<BrandSummary[]> {
       console.warn('Brands collection query notice:', e);
     }
 
-    // 2. Fetch all products from PRODUCTS_COLLECTION and aggregate by brand
+    // 2. Fetch all products from SHOPIFY_PRODUCTS_COLLECTION and aggregate by brand
     try {
-      const prodSnapshot = await getDocs(collection(db, PRODUCTS_COLLECTION));
+      const prodSnapshot = await getDocs(collection(db, SHOPIFY_PRODUCTS_COLLECTION));
       const brandCounts: Record<string, { name: string; count: number; categories: Set<string>; lastCrawledAt?: string; officialUrl?: string }> = {};
 
       prodSnapshot.forEach((d) => {
-        const p = d.data() as Product;
-        const bName = p.brand || 'D2C Brand';
-        const slug = bName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const spData = d.data();
+        if (spData && (spData.title || spData.name || spData.price)) {
+          const p = mapShopifyProductToProduct(spData, d.id);
+          const bName = p.brand || 'D2C Brand';
+          const slug = bName.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-        if (!brandCounts[slug]) {
-          brandCounts[slug] = {
-            name: bName,
-            count: 0,
-            categories: new Set(),
-            lastCrawledAt: p.lastUpdated || new Date().toISOString(),
-            officialUrl: p.officialUrl
-          };
-        }
-        brandCounts[slug].count += 1;
-        if (p.category) brandCounts[slug].categories.add(p.category);
-        if (p.officialUrl && !brandCounts[slug].officialUrl) {
-          brandCounts[slug].officialUrl = p.officialUrl;
-        }
+          if (!brandCounts[slug]) {
+            brandCounts[slug] = {
+              name: bName,
+              count: 0,
+              categories: new Set(),
+              lastCrawledAt: new Date().toISOString(),
+              officialUrl: p.officialUrl
+            };
+          }
+          brandCounts[slug].count += 1;
+          if (p.category) brandCounts[slug].categories.add(p.category);
+          if (p.officialUrl && !brandCounts[slug].officialUrl) {
+            brandCounts[slug].officialUrl = p.officialUrl;
+          }
 
-        // Keep memoryProductsCache in sync
-        if (!memoryProductsCache.some((mp) => mp.id === d.id)) {
-          memoryProductsCache.push({ id: d.id, ...p });
+          // Keep memoryProductsCache in sync
+          if (!memoryProductsCache.some((mp) => mp.id === p.id)) {
+            memoryProductsCache.push(p);
+          }
         }
       });
 
@@ -1403,23 +1503,32 @@ export async function getProductsByBrandFromDb(brandName: string): Promise<Produ
       console.warn('Notice querying brand product subcollection:', e);
     }
 
-    // 2. Query top-level `products` as fallback
-    const querySnapshot = await getDocs(collection(db, PRODUCTS_COLLECTION));
-    querySnapshot.forEach((d) => {
-      const p = { id: d.id, ...d.data() } as Product;
-      const pBrand = (p.brand || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      const pId = p.id.toLowerCase();
+    // 2. Query `shopify_products` collection
+    try {
+      const shopifySnap = await getDocs(collection(db, SHOPIFY_PRODUCTS_COLLECTION));
+      shopifySnap.forEach((d) => {
+        const spData = d.data();
+        if (spData) {
+          const mapped = mapShopifyProductToProduct(spData, d.id);
+          const pBrand = (mapped.brand || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const pId = mapped.id.toLowerCase();
 
-      if (
-        pBrand === brandSlug ||
-        (pBrand.length > 2 && brandSlug.includes(pBrand)) ||
-        (brandSlug.length > 2 && pBrand.includes(brandSlug)) ||
-        pId.startsWith(brandSlug) ||
-        (p.brand && p.brand.toLowerCase() === brandName.toLowerCase())
-      ) {
-        products.push(p);
-      }
-    });
+          if (
+            pBrand === brandSlug ||
+            (pBrand.length > 2 && brandSlug.includes(pBrand)) ||
+            (brandSlug.length > 2 && pBrand.includes(brandSlug)) ||
+            pId.startsWith(brandSlug) ||
+            (mapped.brand && mapped.brand.toLowerCase() === brandName.toLowerCase())
+          ) {
+            if (!products.some((existing) => existing.id === mapped.id)) {
+              products.push(mapped);
+            }
+          }
+        }
+      });
+    } catch (e) {
+      console.warn('Notice querying shopify_products for brand:', e);
+    }
 
     return products;
   })();
@@ -1723,6 +1832,299 @@ export async function submitBrandAdditionRequest(data: BrandAdditionRequestData)
     } catch {
       // Fallback
     }
+    return false;
+  }
+}
+
+// ----------------------------------------------------------------------------
+// SHOPIFY STORES & SHOPIFY PRODUCTS FIRESTORE SERVICES
+// ----------------------------------------------------------------------------
+const SHOPIFY_STORES_COLLECTION = 'shopify_stores';
+const SHOPIFY_PRODUCTS_COLLECTION = 'shopify_products';
+
+export async function saveShopifyStoreToDb(storeData: Partial<ShopifyStore>): Promise<ShopifyStore> {
+  const path = SHOPIFY_STORES_COLLECTION;
+  const storeDomain = storeData.store_domain?.toLowerCase().trim() || 'store';
+  const cleanId = sanitizeDocId(storeDomain.replace(/^https?:\/\//, ''));
+  const now = new Date().toISOString();
+
+  const storeRecord: ShopifyStore = {
+    id: cleanId,
+    store_domain: storeData.store_domain || '',
+    store_name: storeData.store_name || storeDomain,
+    api_key: storeData.api_key || '',
+    access_token: storeData.access_token || '',
+    status: storeData.status || 'active',
+    total_products: storeData.total_products || 0,
+    last_scraped_at: storeData.last_scraped_at || now,
+    created_at: storeData.created_at || now,
+    discount_code: storeData.discount_code || '',
+    notes: storeData.notes || ''
+  };
+
+  try {
+    await setDoc(doc(db, path, cleanId), sanitizeForFirestore(storeRecord), { merge: true });
+    return storeRecord;
+  } catch (error) {
+    console.error('Error saving Shopify Store to Firestore:', error);
+    try {
+      handleFirestoreError(error, OperationType.WRITE, `${path}/${cleanId}`);
+    } catch {}
+    return storeRecord;
+  }
+}
+
+export async function getShopifyStoresFromDb(): Promise<ShopifyStore[]> {
+  const path = SHOPIFY_STORES_COLLECTION;
+  try {
+    const snapshot = await getDocs(collection(db, path));
+    const stores: ShopifyStore[] = [];
+    snapshot.forEach((d) => {
+      const data = d.data() as ShopifyStore;
+      stores.push({ ...data, id: d.id });
+    });
+    return stores;
+  } catch (error) {
+    console.error('Error getting Shopify Stores from Firestore:', error);
+    try {
+      handleFirestoreError(error, OperationType.LIST, path);
+    } catch {}
+    return [];
+  }
+}
+
+export async function deleteShopifyStoreFromDb(storeId: string, storeDomain?: string): Promise<boolean> {
+  const path = SHOPIFY_STORES_COLLECTION;
+  try {
+    // 1. Delete store document (try exact storeId & cleanId variants)
+    const cleanId = sanitizeDocId(storeId.replace(/^https?:\/\//, ''));
+    try {
+      await deleteDoc(doc(db, path, storeId));
+    } catch (e1) {
+      console.warn('Delete store exact ID attempt:', e1);
+    }
+    if (cleanId !== storeId) {
+      try {
+        await deleteDoc(doc(db, path, cleanId));
+      } catch (e2) {
+        console.warn('Delete store clean ID attempt:', e2);
+      }
+    }
+    if (storeDomain) {
+      const domainCleanId = sanitizeDocId(storeDomain.replace(/^https?:\/\//, ''));
+      if (domainCleanId !== cleanId && domainCleanId !== storeId) {
+        try {
+          await deleteDoc(doc(db, path, domainCleanId));
+        } catch {}
+      }
+    }
+
+    // 2. Also delete associated store products in safe chunks of max 300 items
+    if (storeDomain) {
+      try {
+        const prodPath = SHOPIFY_PRODUCTS_COLLECTION;
+        const targetDomainClean = storeDomain.replace(/^https?:\/\//, '').toLowerCase().split('/')[0];
+
+        const snapshot = await getDocs(collection(db, prodPath));
+        const refsToDelete: any[] = [];
+        snapshot.forEach((d) => {
+          const data = d.data();
+          const prodDom = (data.store_domain || '').toLowerCase();
+          if (prodDom.includes(targetDomainClean)) {
+            refsToDelete.push(d.ref);
+          }
+        });
+
+        if (refsToDelete.length > 0) {
+          const ops = refsToDelete.map((ref) => (batch: ReturnType<typeof writeBatch>) => batch.delete(ref));
+          await executeBatchedOperations(ops);
+        }
+      } catch (prodErr) {
+        console.warn('Could not chunk-delete store products:', prodErr);
+      }
+    }
+    return true;
+  } catch (error) {
+    console.error('Error deleting Shopify store:', error);
+    try {
+      handleFirestoreError(error, OperationType.DELETE, `${path}/${storeId}`);
+    } catch {}
+    return false;
+  }
+}
+
+export async function saveShopifyProductsToDb(
+  products: ShopifyProduct[],
+  onProgress?: (committedCount: number, totalCount: number) => void
+): Promise<boolean> {
+  if (!products || products.length === 0) return true;
+  const path = SHOPIFY_PRODUCTS_COLLECTION;
+
+  try {
+    const ops = products.map((prod) => (batch: ReturnType<typeof writeBatch>) => {
+      const docId = sanitizeDocId(`sp_${prod.variant_id || prod.id}`);
+      const ref = doc(db, path, docId);
+      batch.set(ref, sanitizeForFirestore(prod), { merge: true });
+    });
+
+    await executeBatchedOperations(ops, onProgress);
+    return true;
+  } catch (error) {
+    console.error('Error saving Shopify products batch to Firestore:', error);
+    try {
+      handleFirestoreError(error, OperationType.WRITE, path);
+    } catch {}
+    return false;
+  }
+}
+
+/**
+ * Updates a brand name across Firestore BRANDS_COLLECTION, PRODUCTS_COLLECTION,
+ * and memory caches so discovery feed automatically displays the updated brand name.
+ */
+export async function updateBrandNameInDb(
+  oldBrandName: string,
+  newBrandName: string,
+  storeDomain?: string
+): Promise<boolean> {
+  const trimmedNew = newBrandName.trim();
+  if (!trimmedNew) return false;
+
+  const oldSlug = oldBrandName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const newSlug = trimmedNew.toLowerCase().replace(/[^a-z0-9]/g, '') || 'd2cbrand';
+
+  try {
+    const nowIso = new Date().toISOString();
+
+    // 1. Update memory caches
+    if (oldSlug && memoryBrandsCache[oldSlug]) {
+      const existing = memoryBrandsCache[oldSlug];
+      delete memoryBrandsCache[oldSlug];
+      memoryBrandsCache[newSlug] = {
+        ...existing,
+        id: newSlug,
+        name: trimmedNew
+      };
+    } else {
+      memoryBrandsCache[newSlug] = {
+        id: newSlug,
+        name: trimmedNew,
+        officialUrl: storeDomain ? (storeDomain.startsWith('http') ? storeDomain : `https://${storeDomain}`) : '',
+        totalProducts: 0,
+        categories: ['General'],
+        lastCrawledAt: nowIso
+      };
+    }
+
+    memoryProductsCache.forEach((p) => {
+      const pBrand = p.brand || '';
+      if (
+        pBrand.toLowerCase() === oldBrandName.toLowerCase() ||
+        (storeDomain && p.officialUrl?.toLowerCase().includes(storeDomain.toLowerCase()))
+      ) {
+        p.brand = trimmedNew;
+      }
+    });
+
+    // 2. Write/Update brand doc in BRANDS_COLLECTION
+    const brandDocRef = doc(db, BRANDS_COLLECTION, newSlug);
+    await setDoc(
+      brandDocRef,
+      sanitizeForFirestore({
+        id: newSlug,
+        name: trimmedNew,
+        brand_name: trimmedNew,
+        slug: newSlug,
+        updatedAt: nowIso
+      }),
+      { merge: true }
+    );
+
+    // 3. Batch update products in SHOPIFY_PRODUCTS_COLLECTION
+    const cleanDom = storeDomain ? storeDomain.replace(/^https?:\/\//, '').toLowerCase().split('/')[0] : '';
+    const prodSnap = await getDocs(collection(db, SHOPIFY_PRODUCTS_COLLECTION));
+    const ops: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+
+    prodSnap.forEach((d) => {
+      const data = d.data() as any;
+      const matchesBrand =
+        data.brand_name?.toLowerCase() === oldBrandName.toLowerCase() ||
+        data.brand?.toLowerCase() === oldBrandName.toLowerCase();
+      const matchesDomain =
+        cleanDom &&
+        (data.canonical_product_url?.toLowerCase().includes(cleanDom) ||
+          data.officialUrl?.toLowerCase().includes(cleanDom));
+
+      if (matchesBrand || matchesDomain) {
+        ops.push((batch) => {
+          batch.update(d.ref, {
+            brand: trimmedNew,
+            brand_name: trimmedNew,
+            updated_at: nowIso
+          });
+        });
+      }
+    });
+
+    if (ops.length > 0) {
+      await executeBatchedOperations(ops);
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('Notice updating brand name in DB:', err);
+    return false;
+  }
+}
+
+export async function getShopifyProductsFromDb(storeDomain?: string): Promise<ShopifyProduct[]> {
+  const path = SHOPIFY_PRODUCTS_COLLECTION;
+  try {
+    let q = query(collection(db, path));
+    if (storeDomain) {
+      q = query(collection(db, path), where('store_domain', '==', storeDomain));
+    }
+    const snapshot = await getDocs(q);
+    const products: ShopifyProduct[] = [];
+    snapshot.forEach((d) => {
+      products.push(d.data() as ShopifyProduct);
+    });
+    return products;
+  } catch (error) {
+    console.error('Error fetching Shopify products from Firestore:', error);
+    try {
+      handleFirestoreError(error, OperationType.LIST, path);
+    } catch {}
+    return [];
+  }
+}
+
+export async function deleteShopifyProductFromDb(productId: string): Promise<boolean> {
+  const path = SHOPIFY_PRODUCTS_COLLECTION;
+  const docId = sanitizeDocId(`sp_${productId}`);
+  try {
+    // 1. Delete from shopify_products collection
+    try {
+      await deleteDoc(doc(db, path, docId));
+    } catch {}
+    try {
+      await deleteDoc(doc(db, path, productId));
+    } catch {}
+
+    // 2. Delete from master products collection if exists
+    try {
+      await deleteDoc(doc(db, PRODUCTS_COLLECTION, docId));
+    } catch {}
+    try {
+      await deleteDoc(doc(db, PRODUCTS_COLLECTION, productId));
+    } catch {}
+
+    return true;
+  } catch (error) {
+    console.error('Error deleting Shopify product:', error);
+    try {
+      handleFirestoreError(error, OperationType.DELETE, `${path}/${docId}`);
+    } catch {}
     return false;
   }
 }

@@ -33,7 +33,7 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({
 
   if (!product || !isOpen) return null;
 
-  const images = product.images && product.images.length > 0 ? product.images : ['/female_ss.png'];
+  const images = product.images && product.images.length > 0 ? product.images : ['/Female_SS.png'];
   const currentImg = images[selectedImgIndex % images.length] || images[0];
   const priceSavings = Math.max(0, product.marketplacePrice - product.directPrice);
   const savingsPercent = product.marketplacePrice > 0 
@@ -86,8 +86,8 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({
             </button>
 
             {/* Centered ShopScoper Brand Logo */}
-            <div className="flex items-center justify-center h-10 overflow-visible px-2">
-              <BrandLogo size="md" scale="3.0" />
+            <div className="flex items-center justify-center h-10 px-2">
+              <BrandLogo size="md" />
             </div>
 
             {/* Right Action Icons (Search & Wishlist) */}
@@ -141,25 +141,25 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({
               </div>
             </div>
 
-            {/* Floating Glass Product Information Card */}
-            <div className="m-2.5 sm:m-3 p-3.5 sm:p-4 rounded-[24px] bg-white/15 backdrop-blur-3xl border border-white/30 shadow-2xl text-slate-900 space-y-2.5">
+            {/* Floating Glass Product Information Card - Ultra Transparent & Crystal Clear */}
+            <div className="m-2.5 sm:m-3 p-3.5 sm:p-4 rounded-[26px] bg-slate-950/30 backdrop-blur-md border border-white/25 shadow-2xl text-white space-y-2.5">
               
               {/* Card Header & Price */}
               <div className="flex items-start justify-between gap-3">
                 <div className="space-y-0.5 pr-2">
                   {/* Brand */}
-                  <p className="text-[#6C3BFF] font-extrabold text-[11px] tracking-wider uppercase">
+                  <p className="text-[#A855F7] font-extrabold text-[11px] tracking-wider uppercase drop-shadow-xs">
                     {product.brand || 'MULMUL'}
                   </p>
 
                   {/* Product Name */}
-                  <h2 className="text-base sm:text-lg font-extrabold text-slate-900 leading-tight line-clamp-1">
+                  <h2 className="text-base sm:text-lg font-extrabold text-white leading-tight line-clamp-1 drop-shadow-sm">
                     {product.name}
                   </h2>
 
                   {/* Pricing Row */}
                   <div className="flex items-baseline gap-2 pt-0.5">
-                    <span className="text-xl sm:text-2xl font-extrabold text-[#6C3BFF] tracking-tight">
+                    <span className="text-xl sm:text-2xl font-extrabold text-[#A855F7] tracking-tight drop-shadow-xs">
                       ₹{product.directPrice.toLocaleString('en-IN')}
                     </span>
                   </div>
@@ -168,10 +168,10 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({
                 {/* Floating Wishlist Button on Top Right of Card */}
                 <button
                   onClick={() => onToggleWishlist(product)}
-                  className="w-10 h-10 rounded-full bg-white/80 hover:bg-white shadow-md border border-white/80 flex items-center justify-center shrink-0 active:scale-90 transition-transform"
+                  className="w-10 h-10 rounded-full bg-white/20 hover:bg-white/40 backdrop-blur-md shadow-lg border border-white/35 flex items-center justify-center shrink-0 active:scale-90 transition-all cursor-pointer"
                   aria-label="Toggle Wishlist"
                 >
-                  <Heart className={`w-4 h-4 ${isWishlisted ? 'fill-[#FF2D55] text-[#FF2D55]' : 'text-slate-400'}`} />
+                  <Heart className={`w-4 h-4 ${isWishlisted ? 'fill-[#FF2D55] text-[#FF2D55]' : 'text-white'}`} />
                 </button>
               </div>
 
@@ -195,10 +195,33 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({
                 {/* Shop Now Button (Dark Navy) */}
                 <button
                   onClick={() => {
-                    onExpressBuy(product);
+                    const bestCode = (product.active_promo_code || product.couponCode || '').trim();
+                    let storeDom = product.store_domain || product.officialUrl || '';
+                    if (storeDom && !storeDom.startsWith('http://') && !storeDom.startsWith('https://')) {
+                      storeDom = 'https://' + storeDom;
+                    }
+                    if (product.cart_permalink) {
+                      let checkoutUrl = product.cart_permalink;
+                      if (bestCode && !checkoutUrl.includes('/discount/')) {
+                        const varId = product.variant_id;
+                        if (varId && storeDom) {
+                          checkoutUrl = `${storeDom}/discount/${encodeURIComponent(bestCode)}?redirect=/cart/${varId}:1`;
+                        } else if (!checkoutUrl.includes('discount=')) {
+                          checkoutUrl += (checkoutUrl.includes('?') ? '&' : '?') + `discount=${encodeURIComponent(bestCode)}`;
+                        }
+                      }
+                      window.open(checkoutUrl, '_blank');
+                    } else if (product.variant_id && storeDom) {
+                      const checkoutUrl = bestCode
+                        ? `${storeDom}/discount/${encodeURIComponent(bestCode)}?redirect=/cart/${product.variant_id}:1`
+                        : `${storeDom}/cart/${product.variant_id}:1?checkout`;
+                      window.open(checkoutUrl, '_blank');
+                    } else {
+                      onExpressBuy(product);
+                    }
                     onClose();
                   }}
-                  className="py-2.5 sm:py-3 px-3.5 rounded-xl bg-[#0B132B] hover:bg-slate-800 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md shadow-slate-900/20 active:scale-[0.98] transition-all"
+                  className="py-2.5 sm:py-3 px-3.5 rounded-xl bg-[#0B132B] hover:bg-slate-800 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md shadow-slate-900/20 active:scale-[0.98] transition-all cursor-pointer"
                 >
                   <ShoppingBag className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
                   <span>Shop Now</span>

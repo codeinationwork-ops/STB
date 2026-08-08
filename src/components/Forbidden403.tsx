@@ -66,7 +66,7 @@ export const Forbidden403: React.FC<Forbidden403Props> = ({
             className="w-full sm:w-auto px-6 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-mono font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer border border-slate-700"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span>Return to Main Store</span>
+            <span>Return to ShopScoper</span>
           </button>
 
           <button
@@ -74,7 +74,7 @@ export const Forbidden403: React.FC<Forbidden403Props> = ({
             className="w-full sm:w-auto px-6 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-mono font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg shadow-rose-600/20"
           >
             <LogOut className="w-4 h-4" />
-            <span>Switch / Login as Admin</span>
+            <span>Sign in with another account</span>
           </button>
         </div>
 

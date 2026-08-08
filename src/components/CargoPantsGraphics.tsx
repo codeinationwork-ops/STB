@@ -15,7 +15,7 @@ export const MaleNavyCargoPants: React.FC<{ className?: string }> = ({ className
         className="relative z-20 w-[105%] h-[115%] -mt-4 flex items-center justify-center overflow-visible"
       >
         <motion.img
-          src="/male_ss.png"
+          src="/male_SS.png"
           alt="Men's Outfit"
           whileHover={{ scale: 1.12, y: -10, filter: "drop-shadow(0 20px 25px rgba(37,99,235,0.35))" }}
           transition={{ type: "spring", stiffness: 300, damping: 20 }}
@@ -40,7 +40,7 @@ export const FemalePinkCargoPants: React.FC<{ className?: string }> = ({ classNa
         className="relative z-20 w-[105%] h-[115%] -mt-4 flex items-center justify-center overflow-visible"
       >
         <motion.img
-          src="/female_ss.png"
+          src="/Female_SS.png"
           alt="Women's Outfit"
           whileHover={{ scale: 1.12, y: -10, filter: "drop-shadow(0 20px 25px rgba(225,29,72,0.35))" }}
           transition={{ type: "spring", stiffness: 300, damping: 20 }}

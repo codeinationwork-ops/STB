@@ -2,8 +2,8 @@
  * Utility functions for high-performance image loading, optimization, and preloading.
  */
 
-export const DEFAULT_PRODUCT_FALLBACK = '/female_ss.png';
-export const DEFAULT_MALE_FALLBACK = '/male_ss.png';
+export const DEFAULT_PRODUCT_FALLBACK = '/Female_SS.png';
+export const DEFAULT_MALE_FALLBACK = '/male_SS.png';
 
 /**
  * Ensures image URLs are optimized (e.g., adding sizing parameters to Unsplash URLs)

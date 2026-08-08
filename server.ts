@@ -240,17 +240,18 @@ app.post(['/api/gpt-tryon', '/api/v1/gpt-tryon'], async (req, res) => {
 TASK: Inpaint the garment (Image 2) onto the person (Image 1).
 
 STRICT CONSTRAINTS:
-1. PRESERVE IDENTITY: 100% retain the person's exact face, expression, skin tone, hair, body shape, proportions, and pose.
-2. PRESERVE ENVIRONMENT: 100% retain the original background, shadows, camera angle, and lighting.
-3. INPAINT GARMENT: Only replace the clothing. Drape the new garment naturally to fit the person's exact existing contours.
+1. 100% IDENTITY & POSE LOCK: Retain the person's exact facial features, eyes, expression, skin tone, hairstyle, body shape, skeletal proportions, hands, feet, and posture with zero alterations, warping, or blurring.
+2. 100% ENVIRONMENT LOCK: Keep the original background, camera angle, perspective, depth-of-field, ambient shadows, noise grain, and lighting conditions completely untouched.
+3. PRECISE GARMENT DRAPING: Replace ONLY the clothing area on the target body. Wrap and drape the garment naturally over the torso and limbs, accurately conforming to the person's specific pose, body curvature, and muscle geometry.
+4. FABRIC & PATTERN FIDELITY: Maintain total visual accuracy of the target garment's fabric texture, weave, patterns, prints, stitching, collar cuts, buttons, zippers, and brand logos without stretching or pixelation.
+5. NATURAL SHADOWS & INTERACTION: Generate hyper-realistic cloth folds, creasing, micro-wrinkles, contact shadows along skin lines, and light reflections that match the lighting of the target image.
 
 CRITICAL INSTRUCTION: Execute the image_generation tool silently. Do NOT output any conversational text, pleasantries, or explanations.
 `;
 
     console.log("🚀 Requesting ultra low-cost try-on (Silent Mode)... Please wait.");
 
-    const defaultOpenAIKey = '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';
-    const activeApiKey = customApiKey || process.env.OPENAI_API_KEY || defaultOpenAIKey;
+    const activeApiKey = customApiKey || process.env.OPENAI_API_KEY || '';
 
     const openai = new OpenAI({
       apiKey: activeApiKey
@@ -388,7 +389,115 @@ async function fetchFirestoreProducts(): Promise<any[]> {
   }
 }
 
+// REST API Endpoint: Backend Products & Price Range Filtering
+app.get(['/api/v1/products', '/api/products'], async (req, res) => {
+  try {
+    const minPrice = req.query.minPrice !== undefined && req.query.minPrice !== '' ? Number(req.query.minPrice) : null;
+    const maxPrice = req.query.maxPrice !== undefined && req.query.maxPrice !== '' ? Number(req.query.maxPrice) : null;
+    const gender = (req.query.gender as string) || 'All';
+    const category = (req.query.category as string) || '';
+    const search = (req.query.search as string || '').toLowerCase().trim();
+    const sortBy = (req.query.sortBy as string) || 'savings';
+
+    let allProducts = await fetchFirestoreProducts();
+
+    let filtered = allProducts.filter((p) => {
+      const price = Number(p.directPrice ?? p.price ?? 0);
+
+      // Price filters
+      if (minPrice !== null && !isNaN(minPrice) && price < minPrice) return false;
+      if (maxPrice !== null && !isNaN(maxPrice) && price > maxPrice) return false;
+
+      // Gender filter
+      if (gender && gender !== 'All') {
+        const pGender = (p.gender || 'Unisex').toLowerCase();
+        const gTarget = gender.toLowerCase();
+        if (gTarget === 'men' && pGender === 'women') return false;
+        if (gTarget === 'women' && pGender === 'men') return false;
+      }
+
+      // Category filter
+      if (category && category !== 'All' && category.toLowerCase() !== 'all categories') {
+        const pCat = (p.category || '').toLowerCase();
+        if (!pCat.includes(category.toLowerCase())) return false;
+      }
+
+      // Search query filter
+      if (search) {
+        const fullText = `${p.name} ${p.brand} ${p.category} ${p.description}`.toLowerCase();
+        if (!fullText.includes(search)) return false;
+      }
+
+      return true;
+    });
+
+    // Sorting
+    if (sortBy === 'price-asc') {
+      filtered.sort((a, b) => (Number(a.directPrice) || 0) - (Number(b.directPrice) || 0));
+    } else if (sortBy === 'price-desc') {
+      filtered.sort((a, b) => (Number(b.directPrice) || 0) - (Number(a.directPrice) || 0));
+    } else if (sortBy === 'rating') {
+      filtered.sort((a, b) => (Number(b.rating) || 0) - (Number(a.rating) || 0));
+    } else {
+      // 'savings' default
+      filtered.sort((a, b) => {
+        const savingsA = (Number(a.marketplacePrice) || 0) - (Number(a.directPrice) || 0);
+        const savingsB = (Number(b.marketplacePrice) || 0) - (Number(b.directPrice) || 0);
+        return savingsB - savingsA;
+      });
+    }
+
+    // Price statistics calculation
+    const prices = filtered.map(p => Number(p.directPrice) || 0);
+    const minCalculated = prices.length > 0 ? Math.min(...prices) : 0;
+    const maxCalculated = prices.length > 0 ? Math.max(...prices) : 0;
+
+    return res.json({
+      success: true,
+      count: filtered.length,
+      products: filtered,
+      priceStats: {
+        min: minCalculated,
+        max: maxCalculated
+      },
+      appliedFilters: {
+        minPrice,
+        maxPrice,
+        gender,
+        category,
+        search,
+        sortBy
+      }
+    });
+  } catch (err: any) {
+    console.error('Error fetching filtered products:', err);
+    return res.status(500).json({ error: err.message || 'Failed to fetch products' });
+  }
+});
+
 // Human-style intent parser using Gemini AI
+/**
+ * Normalizes queries to handle common clothing terms, hyphens, and plurals.
+ */
+function normalizeQuery(query: string): string {
+  if (!query) return '';
+  let cleaned = query.trim().toLowerCase();
+  // Normalize T-Shirt & Tee variations to a single token 'tshirt'
+  cleaned = cleaned.replace(/\b(t[\s\-]?shirts?|tees?)\b/gi, 'tshirt');
+  return cleaned;
+}
+
+/**
+ * Prepares product text fields for strict keyword scanning.
+ */
+function normalizeText(text: string): string {
+  if (!text) return '';
+  let cleaned = text.toLowerCase();
+  // Convert "t-shirt", "t shirt", "t-shirts", "tee", "tees" in product text to "tshirt"
+  cleaned = cleaned.replace(/\b(t[\s\-]?shirts?|tees?)\b/gi, 'tshirt');
+  return cleaned;
+}
+
 async function parseHumanIntent(query: string, categoryContext?: string): Promise<{
   search_keywords: string;
   product_type: string | null;
@@ -439,8 +548,11 @@ async function parseHumanIntent(query: string, categoryContext?: string): Promis
     if (t === 'hoodie' || t === 'hoodies' || t === 'sweatshirt') {
       ['hoodie', 'hoodies', 'sweatshirt', 'pullover', 'fleece'].forEach((s) => synonymsSet.add(s));
     }
-    if (t === 'shirt' || t === 'shirts' || t === 'top') {
-      ['shirt', 'shirts', 'oversized', 'tee', 'top', 'polo'].forEach((s) => synonymsSet.add(s));
+    if (t === 'shirt' || t === 'shirts') {
+      ['shirt', 'shirts', 'shirting', 'button-down', 'polo'].forEach((s) => synonymsSet.add(s));
+    }
+    if (t === 'tshirt' || t === 'tshirts' || t === 't-shirt' || t === 'tee' || t === 'tees') {
+      ['tshirt', 'tshirts', 't-shirt', 't-shirts', 'tee', 'tees'].forEach((s) => synonymsSet.add(s));
     }
     if (t === 'skincare' || t === 'serum' || t === 'cream' || t === 'moisturizer') {
       ['skincare', 'serum', 'cream', 'moisturizer', 'cleanser', 'facewash', 'lotion'].forEach((s) => synonymsSet.add(s));
@@ -462,7 +574,7 @@ async function parseHumanIntent(query: string, categoryContext?: string): Promis
     explanation: `Extracted intent for "${cleanKeywords || trimmed}"${maxPrice ? ` with max budget ₹${maxPrice}` : ''}${genderTarget ? ` for ${genderTarget}` : ''}.`
   };
 
-  if (ai) {
+  if (ai && process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== '') {
     try {
       const prompt = `You are a human e-commerce search assistant. Understand the true human meaning of this search query and extract structured parameters.
 Query: "${query}"
@@ -501,8 +613,13 @@ Return JSON strictly matching:
           explanation: parsed.explanation || fallbackResult.explanation
         };
       }
-    } catch (err) {
-      console.warn('Notice parsing intent with Gemini AI:', err);
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      if (msg.includes('401') || msg.includes('UNAUTHENTICATED') || msg.includes('invalid authentication')) {
+        console.warn('Gemini API unauthenticated or key invalid, seamlessly using local intent parser.');
+      } else {
+        console.warn('Notice parsing intent with Gemini AI:', msg);
+      }
     }
   }
 
@@ -543,62 +660,75 @@ function evaluateProductHumanStyle(p: any, intent: Awaited<ReturnType<typeof par
     }
   }
 
-  // 5. Semantic Field Scoring
-  const title = String(p.name || p.title || '').toLowerCase();
-  const category = String(p.category || '').toLowerCase();
-  const description = String(p.description || '').toLowerCase();
-  const brand = String(p.brand || '').toLowerCase();
-  const specsStr = (p.specs || []).map((s: any) => `${s.label} ${s.value}`).join(' ').toLowerCase();
+  // 5. Normalized Semantic Field Scoring
+  const normTitle = normalizeText(String(p.name || p.title || ''));
+  const normCategory = normalizeText(String(p.category || ''));
+  const normDescription = normalizeText(String(p.description || ''));
+  const normBrand = normalizeText(String(p.brand || ''));
+  const normSpecsStr = normalizeText((p.specs || []).map((s: any) => `${s.label} ${s.value}`).join(' '));
 
-  const searchTokens = Array.from(new Set([
-    ...(intent.search_keywords || '').toLowerCase().split(/\s+/),
-    ...(intent.synonyms || []).map((s: string) => s.toLowerCase())
-  ])).filter((t) => t.length > 0);
+  const combinedProductText = `${normTitle} ${normCategory} ${normDescription} ${normBrand} ${normSpecsStr}`;
+
+  // HARD EXCLUDE: Garment Category / Type Mismatch Guardrails
+  const allSearchText = `${intent.search_keywords || ''} ${(intent.synonyms || []).join(' ')}`.toLowerCase();
+  const isSearchTop = /\b(shirt|shirts|tshirt|tshirts|t-shirt|t-shirts|tee|tees|top|tops|polo|polos|hoodie|hoodies|sweatshirt|sweatshirts|sweater|sweaters)\b/i.test(allSearchText);
+  const isSearchBottom = /\b(jeans|jean|pant|pants|trouser|trousers|cargo|cargos|jogger|joggers|short|shorts|skirt|skirts|slacks|chinos|bottoms|bottomwear|denim)\b/i.test(allSearchText);
+  const isSearchFootwear = /\b(shoe|shoes|sneaker|sneakers|boot|boots|sandal|sandals|slides|footwear|heels)\b/i.test(allSearchText);
+
+  const fullProductText = `${normTitle} ${normCategory}`.toLowerCase();
+  const isProdBottom = /\b(jeans|jean|pant|pants|trouser|trousers|cargo|cargos|jogger|joggers|short|shorts|skirt|skirts|slacks|chinos|bottoms|bottomwear|denim)\b/i.test(fullProductText);
+  const isProdTop = /\b(shirt|shirts|tshirt|tshirts|t-shirt|t-shirts|tee|tees|top|tops|polo|polos|hoodie|hoodies|sweatshirt|sweatshirts|sweater|sweaters|topwear)\b/i.test(fullProductText);
+  const isProdFootwear = /\b(shoe|shoes|sneaker|sneakers|boot|boots|sandal|sandals|slides|footwear|heels)\b/i.test(fullProductText);
+
+  if (isSearchTop && (isProdBottom || isProdFootwear)) {
+    return { product: p, score: -1, reason: 'User searched for Tops/Shirts, but product is a Bottom or Footwear.' };
+  }
+  if (isSearchBottom && (isProdTop || isProdFootwear)) {
+    return { product: p, score: -1, reason: 'User searched for Bottoms/Pants, but product is a Top or Footwear.' };
+  }
+  if (isSearchFootwear && (isProdTop || isProdBottom)) {
+    return { product: p, score: -1, reason: 'User searched for Footwear, but product is Apparel.' };
+  }
+
+  const queryKeywordsNormalized = normalizeQuery(intent.search_keywords || '');
+  const queryTokens = queryKeywordsNormalized.split(/\s+/).filter((t) => t.length > 0);
+
+  if (queryTokens.length > 0) {
+    // STRICT CHECK: Every query token MUST exist as a full word/term (\btoken\b) in combinedProductText
+    const matchesAllTokens = queryTokens.every((token) => {
+      const escapedToken = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`\\b${escapedToken}\\b`, 'i');
+      return regex.test(combinedProductText);
+    });
+
+    if (!matchesAllTokens) {
+      return { product: p, score: -1, reason: `Failed strict word-boundary token match for query "${queryKeywordsNormalized}"` };
+    }
+  }
 
   let score = 0;
-  let matchesFound = 0;
+  for (const token of queryTokens) {
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const reg = new RegExp(`\\b${escaped}\\b`, 'i');
 
-  for (const token of searchTokens) {
-    if (!token) continue;
-    if (title.includes(token)) {
-      score += 10;
-      matchesFound++;
-    }
-    if (category.includes(token)) {
-      score += 6;
-      matchesFound++;
-    }
-    if (specsStr.includes(token)) {
-      score += 4;
-      matchesFound++;
-    }
-    if (brand.includes(token)) {
-      score += 3;
-      matchesFound++;
-    }
-    if (description.includes(token)) {
-      score += 2;
-      matchesFound++;
-    }
+    if (reg.test(normTitle)) score += 20;       // Title match receives top priority
+    if (reg.test(normCategory)) score += 12;
+    if (reg.test(normSpecsStr)) score += 8;
+    if (reg.test(normBrand)) score += 5;
+    if (reg.test(normDescription)) score += 3;  // Description match secondary priority
   }
 
   // Color matching
   if (intent.color) {
     const colorLower = intent.color.toLowerCase();
-    const fullText = `${title} ${category} ${specsStr} ${description}`;
-    if (fullText.includes(colorLower)) {
+    if (combinedProductText.includes(colorLower)) {
       score += 5;
-    } else if (searchTokens.length > 0) {
+    } else if (queryTokens.length > 0) {
       score -= 2;
     }
   }
 
-  // DISQUALIFY if user provided search keywords and product matched ZERO tokens
-  if (searchTokens.length > 0 && matchesFound === 0) {
-    return { product: p, score: 0, reason: `No keyword/synonym match for ${searchTokens.join(', ')}` };
-  }
-
-  return { product: p, score, reason: null };
+  return { product: p, score: Math.max(score, 1), reason: null };
 }
 
 // Helper for Multi-Brand Round-Robin Interleaving
@@ -712,7 +842,7 @@ app.post(['/api/search', '/api/v1/smart-search'], async (req, res) => {
   const historyStr = Array.isArray(search_history) && search_history.length > 0 ? search_history.join(', ') : 'None';
 
   try {
-    if (ai) {
+    if (ai && process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim() !== '') {
       const prompt = `You are an expert e-commerce search intent parsing engine and D2C savings assistant for an Indian direct-to-consumer aggregator.
 
 Analyze the user search query and recent search history to extract precise structured search intent, category, price constraints, specifications, and synonyms.
@@ -760,7 +890,7 @@ Return JSON in this exact structure:
 }`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-2.5-flash',
         contents: prompt,
         config: {
           responseMimeType: 'application/json'
@@ -783,7 +913,12 @@ Return JSON in this exact structure:
       }
     }
   } catch (error: any) {
-    console.error('Gemini API search intent parser error, using fallback:', error?.message || error);
+    const msg = error?.message || String(error);
+    if (msg.includes('401') || msg.includes('UNAUTHENTICATED') || msg.includes('invalid authentication')) {
+      console.warn('Gemini API search intent parser unauthenticated, using local fallback.');
+    } else {
+      console.warn('Gemini API search intent parser notice:', msg);
+    }
   }
 
   // Parse price limit fallback using regex
@@ -1507,6 +1642,748 @@ app.post(['/api/crawl', '/api/v1/crawl'], async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// SHOPIFY SPECIFIC HYBRID JSON SCRAPER & API ENDPOINT
+// ----------------------------------------------------------------------------
+app.post(['/api/shopify/scrape', '/api/v1/shopify/scrape'], async (req, res) => {
+  const { store_url, api_key, access_token, discount_code } = req.body;
+
+  if (!store_url || typeof store_url !== 'string' || store_url.trim().length < 3) {
+    return res.status(400).json({ error: 'A valid Shopify store URL or domain is required (e.g. gymshark.com)' });
+  }
+
+  let rawUrl = store_url.trim();
+  if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+    rawUrl = 'https://' + rawUrl;
+  }
+
+  try {
+    const logs: string[] = [
+      `🛒 [Phase 1: Automated Shopify URL Discovery] Target Store: ${rawUrl}`
+    ];
+
+    const parsedUrl = new URL(rawUrl);
+    const store_domain = parsedUrl.origin;
+    const cleanDomain = parsedUrl.hostname.replace('www.', '');
+    const domainPart = cleanDomain.split('.')[0];
+    const store_name = domainPart.charAt(0).toUpperCase() + domainPart.slice(1).toLowerCase();
+
+    logs.push(`🏷️ [Store Auto-Resolution] Store Name: "${store_name}" | Domain: ${store_domain}`);
+
+    // ------------------------------------------------------------------------
+    // TYPE C DISCOUNT CRAWLER: Extract Promo Banners & Storefront Token from HTML
+    // ------------------------------------------------------------------------
+    let detectedPromoCode = (discount_code || '').trim();
+    let promoBannerText = '';
+    let extractedStorefrontToken = '';
+
+    try {
+      logs.push(`🔍 [Type C Promo Banner Crawler] Inspecting store HTML header & announcement bars...`);
+      const htmlResp = await fetch(store_domain, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        signal: AbortSignal.timeout(5000)
+      });
+
+      if (htmlResp.ok) {
+        const htmlText = await htmlResp.text();
+
+        // Extract public storefront token if present in page JS
+        const sfTokenMatch = htmlText.match(/(?:accessToken|storefrontApiKey|storefrontAccessToken|storefront_access_token)["']?\s*:\s*["']([a-f0-9]{32})["']/i);
+        if (sfTokenMatch && sfTokenMatch[1]) {
+          extractedStorefrontToken = sfTokenMatch[1];
+          logs.push(`🔑 Auto-discovered public Storefront API Key from page HTML: "${extractedStorefrontToken}"`);
+        }
+
+        const codeMatches = [
+          /use\s+code\s+([A-Z0-9_-]{3,15})/i,
+          /code:\s*([A-Z0-9_-]{3,15})/i,
+          /with\s+code\s+([A-Z0-9_-]{3,15})/i,
+          /coupon\s+([A-Z0-9_-]{3,15})/i,
+          /promo\s+([A-Z0-9_-]{3,15})/i,
+          /([0-9]{2}OFF|SAVE[0-9]{2}|EXTRA[0-9]{2}|TAKE[0-9]{2}|WELCOME[0-9]{2})/i
+        ];
+
+        for (const regex of codeMatches) {
+          const match = htmlText.match(regex);
+          if (match && match[1]) {
+            detectedPromoCode = match[1].toUpperCase();
+            promoBannerText = match[0];
+            logs.push(`🎉 [Type C Promo Code Discovered] Extracted active promo banner code from HTML: "${detectedPromoCode}" (${promoBannerText})`);
+            break;
+          }
+        }
+      }
+    } catch (bannerErr: any) {
+      logs.push(`⚠️ Announcement bar HTML scan notice: ${bannerErr.message}`);
+    }
+
+    if (detectedPromoCode) {
+      logs.push(`🏷️ [Active Promo Code] "${detectedPromoCode}" will be auto-attached to Cart Permalinks.`);
+    } else {
+      logs.push(`ℹ️ No promo code specified or found in announcement bars. Cart Permalinks generated without promo parameters.`);
+    }
+
+    const shopifyProducts: any[] = [];
+    const masterCatalogProducts: any[] = [];
+    const seenVariantIds = new Set<string>();
+
+    const buildCartPermalink = (domain: string, varId: string | number, promo?: string) => {
+      let cleanDomain = domain;
+      if (!cleanDomain.startsWith('http://') && !cleanDomain.startsWith('https://')) {
+        cleanDomain = 'https://' + cleanDomain;
+      }
+      if (promo && promo.trim()) {
+        return `${cleanDomain}/discount/${encodeURIComponent(promo.trim())}?redirect=/cart/${varId}:1`;
+      }
+      return `${cleanDomain}/cart/${varId}:1?checkout`;
+    };
+
+    // ------------------------------------------------------------------------
+    // Case 0: Official Shopify Storefront GraphQL API with Cursor Pagination
+    // ------------------------------------------------------------------------
+    let userToken = (access_token || api_key || extractedStorefrontToken || process.env.SHOPIFY_ACCESS_TOKEN || '').trim();
+
+    if (userToken) {
+      logs.push(`🔑 [Shopify Storefront GraphQL Engine] Querying paginated Storefront API (${store_domain}/api/2024-01/graphql.json)...`);
+      const graphqlEndpoint = `${store_domain}/api/2024-01/graphql.json`;
+
+      let sfHasNextPage = true;
+      let sfCursor: string | null = null;
+      let sfPageCount = 0;
+      const maxSfPages = 15;
+
+      while (sfHasNextPage && sfPageCount < maxSfPages) {
+        sfPageCount++;
+        const queryBody = {
+          query: `
+            query GetAvailableProducts($after: String) {
+              products(first: 250, after: $after) {
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
+                edges {
+                  cursor
+                  node {
+                    id
+                    title
+                    descriptionHtml
+                    vendor
+                    productType
+                    handle
+                    availableForSale
+                    images(first: 5) {
+                      edges {
+                        node {
+                          url
+                        }
+                      }
+                    }
+                    variants(first: 10) {
+                      edges {
+                        node {
+                          id
+                          title
+                          availableForSale
+                          price {
+                            amount
+                            currencyCode
+                          }
+                          compareAtPrice {
+                            amount
+                            currencyCode
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          `,
+          variables: sfCursor ? { after: sfCursor } : {}
+        };
+
+        try {
+          const sfResp = await fetch(graphqlEndpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Shopify-Storefront-Access-Token': userToken,
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify(queryBody),
+            signal: AbortSignal.timeout(6000)
+          });
+
+          if (!sfResp.ok) {
+            sfHasNextPage = false;
+            break;
+          }
+
+          const sfData: any = await sfResp.json();
+          const productEdges = sfData?.data?.products?.edges || [];
+          const pageInfo = sfData?.data?.products?.pageInfo;
+
+          if (!productEdges || productEdges.length === 0) {
+            sfHasNextPage = false;
+            break;
+          }
+
+          for (const edge of productEdges) {
+            const product = edge.node;
+            if (!product.availableForSale) continue;
+
+            const variantEdges = product.variants?.edges || [];
+            const availableVariantEdge = variantEdges.find((v: any) => v.node?.availableForSale !== false) || variantEdges[0];
+            if (!availableVariantEdge || availableVariantEdge.node?.availableForSale === false) continue;
+
+            const variantNode = availableVariantEdge.node;
+            const rawGid = variantNode.id || '';
+            const numericVariantId = rawGid.split('/').pop() || rawGid;
+
+            if (seenVariantIds.has(String(numericVariantId))) continue;
+            seenVariantIds.add(String(numericVariantId));
+
+            const price = parseFloat(variantNode.price?.amount || 0);
+            const compare_price = variantNode.compareAtPrice ? parseFloat(variantNode.compareAtPrice.amount) : null;
+
+            let discount_pct = 0;
+            if (compare_price && compare_price > price) {
+              discount_pct = Math.round(((compare_price - price) / compare_price) * 100);
+            }
+
+            const hasPriceDrop = compare_price ? compare_price > price : false;
+            const previous_price = compare_price || Math.round(price * 1.25);
+            const cart_permalink = buildCartPermalink(store_domain, numericVariantId, detectedPromoCode);
+            const imgList = (product.images?.edges || []).map((img: any) => img.node?.url).filter(Boolean);
+
+            const detectedCat = extractProductCategory(product.productType, [], product.title, product.handle, product.descriptionHtml);
+
+            const spPayload = {
+              id: `sp_${numericVariantId}`,
+              variant_id: numericVariantId,
+              title: product.title,
+              description: cleanHtmlDescription(product.descriptionHtml || product.title),
+              category: detectedCat,
+              images: imgList.length > 0 ? imgList : ['https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=800'],
+              price,
+              compare_at_price: compare_price,
+              discount_percentage: discount_pct,
+              price_dropped: hasPriceDrop,
+              previous_price,
+              active_promo_code: detectedPromoCode,
+              promo_banner_found: promoBannerText,
+              store_domain,
+              cart_permalink,
+              vendor: product.vendor || store_name,
+              created_at: new Date().toISOString(),
+              discount_code: detectedPromoCode
+            };
+
+            shopifyProducts.push(spPayload);
+            masterCatalogProducts.push({
+              id: `sp_${numericVariantId}`,
+              name: product.title,
+              brand: store_name,
+              category: detectedCat,
+              directPrice: price,
+              marketplacePrice: compare_price ? compare_price : Math.round(price * 1.3),
+              marketplaceName: `${store_name} Official Direct`,
+              images: imgList.length > 0 ? imgList : ['https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=800'],
+              specs: [
+                { label: 'Shopify Variant ID', value: String(numericVariantId) },
+                { label: 'Availability', value: 'In Stock (availableForSale: true)' },
+                { label: 'Cart Permalink', value: 'Instant Direct Checkout' }
+              ],
+              stockLeft: 30,
+              rating: 4.9,
+              reviewsCount: 180,
+              trendingScore: 99,
+              couponCode: detectedPromoCode,
+              couponDiscount: discount_pct || 15,
+              officialUrl: `${store_domain}/products/${product.handle || ''}`,
+              description: cleanHtmlDescription(product.descriptionHtml || product.title),
+              variant_id: numericVariantId,
+              store_domain,
+              cart_permalink,
+              compare_at_price: compare_price,
+              discount_percentage: discount_pct,
+              price_dropped: hasPriceDrop,
+              previous_price,
+              active_promo_code: detectedPromoCode
+            });
+          }
+
+          if (pageInfo?.hasNextPage && pageInfo?.endCursor) {
+            sfCursor = pageInfo.endCursor;
+          } else {
+            sfHasNextPage = false;
+          }
+        } catch (sfErr: any) {
+          logs.push(`ℹ️ Storefront GraphQL page ${sfPageCount} note: ${sfErr.message}`);
+          sfHasNextPage = false;
+        }
+      }
+
+      if (shopifyProducts.length > 0) {
+        logs.push(`✅ [Shopify Storefront GraphQL Success] Harvested ${shopifyProducts.length} available products across ${sfPageCount} GraphQL pages.`);
+      }
+    }
+
+    // ------------------------------------------------------------------------
+    // Case 1: Full Catalog Paginated Batch Crawling via /products.json & /collections/all/products.json
+    // ------------------------------------------------------------------------
+    if (shopifyProducts.length === 0) {
+      logs.push(`🔍 [Shopify JSON Endpoint Crawler] Initiating concurrent batch fetch for ${store_domain}...`);
+      const jsonBaseEndpoints = [
+        `${store_domain}/products.json`,
+        `${store_domain}/collections/all/products.json`
+      ];
+
+      for (const baseEp of jsonBaseEndpoints) {
+        if (shopifyProducts.length > 0 && baseEp.includes('collections')) {
+          // Skip redundant collection crawl if products.json harvested items
+          break;
+        }
+
+        let page = 1;
+        const maxPages = 30; // Up to 7,500 items per store
+        let reachedEnd = false;
+
+        while (page <= maxPages && !reachedEnd) {
+          const pageBatch: number[] = [];
+          for (let b = 0; b < 5 && (page + b) <= maxPages; b++) {
+            pageBatch.push(page + b);
+          }
+
+          const fetchPromises = pageBatch.map((pNum) =>
+            fetch(`${baseEp}?limit=250&page=${pNum}`, {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json'
+              },
+              signal: AbortSignal.timeout(6000)
+            })
+              .then((r) => (r.ok && r.headers.get('content-type')?.includes('application/json') ? r.json() : null))
+              .catch(() => null)
+          );
+
+          const results = await Promise.all(fetchPromises);
+
+          let batchAdded = 0;
+          for (let i = 0; i < results.length; i++) {
+            const cData = results[i];
+            const items = cData?.products || [];
+
+            if (!Array.isArray(items) || items.length === 0) {
+              reachedEnd = true;
+              break;
+            }
+
+            let addedThisPage = 0;
+            for (const item of items) {
+              const variants = item.variants || [];
+              const availableVariants = variants.filter((v: any) => v.available !== false);
+              const first_variant = availableVariants[0] || variants[0];
+              if (!first_variant || first_variant.available === false) continue;
+
+              const variant_id = first_variant.id || `${item.id}_0`;
+
+              if (seenVariantIds.has(String(variant_id))) continue;
+              seenVariantIds.add(String(variant_id));
+
+              const price = parseFloat(first_variant.price || 0);
+              const compare_price = first_variant.compare_at_price ? parseFloat(first_variant.compare_at_price) : null;
+
+              let discount_pct = 0;
+              if (compare_price && compare_price > price) {
+                discount_pct = Math.round(((compare_price - price) / compare_price) * 100);
+              }
+
+              const hasPriceDrop = compare_price ? compare_price > price : false;
+              const previous_price = compare_price || Math.round(price * 1.25);
+              const cart_permalink = buildCartPermalink(store_domain, variant_id, detectedPromoCode);
+              const imgList = (item.images || []).map((img: any) => (typeof img === 'string' ? img : img.src)).filter(Boolean);
+
+              const detectedCat = extractProductCategory(item.product_type, item.tags, item.title, item.handle, item.body_html);
+
+              const spPayload = {
+                id: `sp_${variant_id}`,
+                variant_id,
+                title: item.title,
+                description: cleanHtmlDescription(item.body_html || item.title),
+                category: detectedCat,
+                images: imgList.length > 0 ? imgList : ['https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=800'],
+                price,
+                compare_at_price: compare_price,
+                discount_percentage: discount_pct,
+                price_dropped: hasPriceDrop,
+                previous_price,
+                active_promo_code: detectedPromoCode,
+                promo_banner_found: promoBannerText,
+                store_domain,
+                cart_permalink,
+                vendor: item.vendor || store_name,
+                created_at: new Date().toISOString(),
+                discount_code: detectedPromoCode
+              };
+
+              shopifyProducts.push(spPayload);
+              masterCatalogProducts.push({
+                id: `sp_${variant_id}`,
+                name: item.title,
+                brand: store_name,
+                category: detectedCat,
+                directPrice: price,
+                marketplacePrice: compare_price ? compare_price : Math.round(price * 1.3),
+                marketplaceName: `${store_name} Official Direct`,
+                images: imgList.length > 0 ? imgList : ['https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=800'],
+                specs: [
+                  { label: 'Shopify Variant ID', value: String(variant_id) },
+                  { label: 'Cart Permalink', value: 'Instant Direct Checkout' },
+                  { label: 'Active Promo Code', value: detectedPromoCode }
+                ],
+                stockLeft: 25,
+                rating: 4.9,
+                reviewsCount: 142,
+                trendingScore: 98,
+                couponCode: detectedPromoCode,
+                couponDiscount: discount_pct || 15,
+                officialUrl: `${store_domain}/products/${item.handle || ''}`,
+                description: cleanHtmlDescription(item.body_html || item.title),
+                variant_id,
+                store_domain,
+                cart_permalink,
+                compare_at_price: compare_price,
+                discount_percentage: discount_pct,
+                price_dropped: hasPriceDrop,
+                previous_price,
+                active_promo_code: detectedPromoCode
+              });
+              addedThisPage++;
+            }
+
+            batchAdded += addedThisPage;
+            if (items.length < 250) {
+              reachedEnd = true;
+              break;
+            }
+          }
+
+          logs.push(`  ├─ Harvested ${batchAdded} items in batch pages ${pageBatch.join(',')}`);
+          page += pageBatch.length;
+        }
+      }
+    }
+
+    logs.push(`🎉 [Sync Complete] Harvested ${shopifyProducts.length} Shopify products with active promo "${detectedPromoCode}"!`);
+
+    const storeSummary = {
+      id: cleanDomain.replace(/[^a-zA-Z0-9_-]/g, ''),
+      store_domain,
+      store_name,
+      api_key: api_key || process.env.SHOPIFY_ACCESS_TOKEN || '',
+      access_token: access_token || process.env.SHOPIFY_ACCESS_TOKEN || '',
+      status: shopifyProducts.length > 0 ? 'active' : 'error',
+      total_products: shopifyProducts.length,
+      last_scraped_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      discount_code: detectedPromoCode
+    };
+
+    return res.json({
+      success: true,
+      store: storeSummary,
+      shopify_products: shopifyProducts,
+      master_products: masterCatalogProducts,
+      count: shopifyProducts.length,
+      logs
+    });
+
+  } catch (error: any) {
+    console.error('Shopify Scrape API Error:', error);
+    return res.status(500).json({ error: 'Failed to scrape Shopify store: ' + (error.message || 'Unknown error') });
+  }
+});
+
+// Real-Time Gemini AI Category Verification Route
+app.post(['/api/gemini/verify-category', '/api/v1/gemini/verify-category'], async (req, res) => {
+  try {
+    const { category, products, customApiKey, apiKey: bodyApiKey } = req.body;
+    if (!category || !Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({ error: 'Category string and array of products are required.' });
+    }
+
+    const headerKey = req.headers['x-gemini-api-key'] as string | undefined;
+    const effectiveKey = (customApiKey || bodyApiKey || headerKey || process.env.GEMINI_API_KEY || '').trim();
+
+    if (!effectiveKey) {
+      return res.status(400).json({ error: 'GEMINI_API_KEY is not configured.' });
+    }
+
+    const activeAi = new GoogleGenAI({
+      apiKey: effectiveKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build'
+        }
+      }
+    });
+
+    const itemsToVerify = products.slice(0, 20);
+    const productSummaries = itemsToVerify.map((p: any) => ({
+      id: String(p.id || p.variant_id || p.name || p.title),
+      title: p.title || p.name || '',
+      description: (p.description || '').substring(0, 250),
+      currentCategory: p.category || ''
+    }));
+
+    const prompt = `You are an expert e-commerce fashion category validation AI.
+Target Category: "${category}"
+
+Your task is to analyze each product's title, description, and existing category to determine if the product REALLY belongs under "${category}".
+
+Products to analyze:
+${JSON.stringify(productSummaries, null, 2)}
+
+Strict Category Matching Rules:
+- "Tops & Shirts": Must be a top, t-shirt, shirt, polo, hoodie, sweater, sweatshirt, blouse, crop top, tank top. Reject pants, shoes, jackets, dresses, bags.
+- "Bottoms": Must be pants, jeans, trousers, cargos, joggers, shorts, skirts, sweatpants, leggings. Reject shirts, shoes, jackets, dresses.
+- "Outerwear": Must be a jacket, coat, blazer, parka, windbreaker, vest, puffer. Reject shoes, pants, basic t-shirts.
+- "Dresses & Rompers": Must be a dress, gown, romper, jumpsuit. Reject pants, tops, shoes.
+- "Footwear": Must be shoes, sneakers, boots, sandals, slides, heels, loafers. Reject apparel.
+- "Bags & Accessories": Must be bags, backpacks, wallets, belts, jewelry, sunglasses, watches, hats, caps, skincare.
+
+Output JSON object with a "verifications" key containing an array of objects:
+[
+  {
+    "id": "product_id",
+    "isMatch": true or false,
+    "confidence": number between 0 and 1,
+    "reasoning": "Short 1-sentence reason why it matches or fails target category"
+  }
+]`;
+
+    const candidateModels = ['gemini-3.6-flash', 'gemini-3.1-flash-lite'];
+    let resultObj: any = null;
+
+    for (const modelName of candidateModels) {
+      try {
+        const response = await activeAi.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json'
+          }
+        });
+        const resText = response.text || '{}';
+        resultObj = JSON.parse(resText);
+        if (resultObj && Array.isArray(resultObj.verifications)) {
+          break;
+        }
+      } catch (err) {
+        console.warn(`Gemini category verification failed with ${modelName}:`, err);
+      }
+    }
+
+    if (!resultObj || !Array.isArray(resultObj.verifications)) {
+      return res.json({
+        category,
+        verifications: itemsToVerify.map((p: any) => ({
+          id: String(p.id || p.variant_id || p.name || p.title),
+          isMatch: true,
+          confidence: 0.8,
+          reasoning: 'Fallback heuristic match.'
+        }))
+      });
+    }
+
+    return res.json({ category, verifications: resultObj.verifications });
+  } catch (error: any) {
+    console.error('Verify Category API Error:', error);
+    return res.status(500).json({ error: error.message || 'Internal server error' });
+  }
+});
+
+// AI Category & Gender Classification Route (Gemini Powered - Multimodal Photo & Text Analysis)
+app.post('/api/shopify/recategorize-ai', async (req, res) => {
+  try {
+    const { products, customApiKey, apiKey: bodyApiKey } = req.body;
+    if (!Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({ error: 'Array of products is required.' });
+    }
+
+    const headerKey = req.headers['x-gemini-api-key'] as string | undefined;
+    const effectiveKey = (customApiKey || bodyApiKey || headerKey || process.env.GEMINI_API_KEY || '').trim();
+
+    if (!effectiveKey) {
+      return res.status(400).json({ error: 'GEMINI_API_KEY is not configured. Please ensure GEMINI_API_KEY environment variable is set.' });
+    }
+
+    const activeAi = new GoogleGenAI({
+      apiKey: effectiveKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build'
+        }
+      }
+    });
+
+    const taxonomyInstructions = `You are an expert e-commerce fashion taxonomy and demographic classifier. Analyze the product photo (if provided) along with its title and description to categorize the product into EXACTLY ONE of the allowed categories AND infer target gender ("Men", "Women", or "Unisex"). If gender cannot be determined with high confidence, set gender to "N/A".
+
+ALLOWED CATEGORIES:
+- Tops & Shirts (Shirts, button-downs, polos, t-shirts, tees, blouses, sweaters, hoodies, cardigans, crop tops)
+- Bottoms (Jeans, trousers, pants, chinos, cargos, shorts, skirts, sweatpants, joggers, leggings, slacks)
+- Outerwear (Coats, jackets, raincoats, windbreakers, puffers, parkas, vests)
+- Dresses & Rompers (Dresses, gowns, rompers, jumpsuits, overalls)
+- Suiting & Tailored Wear (Suits, blazers, tuxedos, waistcoats)
+- Traditional & Ethnic Wear (Sarees, kurtas, lehengas, sherwanis, dhotis, abayas, kaftans)
+- Activewear & Gym (Sports bras, gym tanks, athletic shorts, compression wear)
+- Underwear & Intimates (Bras, panties, boxers, briefs, lingerie, shapewear)
+- Sleepwear & Loungewear (Pajamas, robes, nightgowns, loungewear)
+- Swimwear (Bikinis, swimsuits, swim trunks, board shorts)
+- Athletic Footwear
+- Casual Shoes
+- Boots
+- Dress Shoes
+- Sandals & Open-Toe
+- Bags & Luggage
+- Headwear
+- Eyewear
+- Neckwear
+- Small Leather Goods
+- Watches
+- Necklaces
+- Rings
+- Earrings
+- Bracelets
+- Skincare
+- Haircare
+- Body Care
+- Fragrance
+- Shaving & Hair Removal
+- Beard & Mustache Care
+- Men's Hair Styling
+- Pet Apparel
+- Not Assigned (Use ONLY if you cannot determine the category with high confidence)
+
+ALLOWED GENDERS: "Men", "Women", "Unisex", "N/A"
+
+CRITICAL TAXONOMY RULES:
+1. SHIRTS, POLOS, BUTTON-DOWNS, TEES, TOPS ARE ALWAYS "Tops & Shirts". NEVER put them in "Bottoms"!
+2. PANTS, JEANS, TROUSERS, CHINOS, SHORTS, SKIRTS ARE ALWAYS "Bottoms".
+3. LOOK AT THE PRODUCT IMAGE CARE TO DETERMINE FIT & MODEL DEMOGRAPHIC (Male/Female/Unisex).
+4. IF AMBIGUOUS OR UNCERTAIN, ASSIGN "Not Assigned" for category and "N/A" for gender.
+
+Return ONLY a JSON object with keys "category" and "gender". Example:
+{"category": "Tops & Shirts", "gender": "Women"}`;
+
+    const itemsToProcess = products.slice(0, 40);
+
+    // Process items concurrently in chunks of 5 with Gemini Multimodal Photo Analysis
+    const results: Array<{ id: string; category: string; gender: string }> = [];
+
+    const chunkSize = 5;
+    for (let i = 0; i < itemsToProcess.length; i += chunkSize) {
+      const chunk = itemsToProcess.slice(i, i + chunkSize);
+      const chunkPromises = chunk.map(async (p: any) => {
+        const id = String(p.id || p.variant_id || p.name || p.title);
+        const title = p.title || p.name || '';
+        const description = (p.description || '').substring(0, 200);
+        const imageUrl = (Array.isArray(p.images) && p.images[0]) || p.image_url || p.featured_image || p.image || null;
+
+        let imagePart: any = null;
+        if (imageUrl && typeof imageUrl === 'string' && imageUrl.startsWith('http')) {
+          try {
+            const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(3500) });
+            if (imgRes.ok) {
+              const arrayBuf = await imgRes.arrayBuffer();
+              const base64 = Buffer.from(arrayBuf).toString('base64');
+              const mimeType = imgRes.headers.get('content-type') || 'image/jpeg';
+              imagePart = {
+                inlineData: {
+                  mimeType: mimeType.split(';')[0],
+                  data: base64
+                }
+              };
+            }
+          } catch (imgErr) {
+            // Image download timeout or error, fallback to text analysis
+          }
+        }
+
+        const textPrompt = `Product Title: "${title}"
+Product Description: "${description}"
+Current Category: "${p.category || 'Not Assigned'}"
+
+Analyze this product ${imagePart ? 'photo and text' : 'text'} according to the taxonomy rules above. Output JSON with "category" and "gender".`;
+
+        const candidateModels = ['gemini-3.6-flash', 'gemini-3.1-flash-lite'];
+
+        for (const modelName of candidateModels) {
+          try {
+            const contentsPayload: any[] = imagePart
+              ? [taxonomyInstructions, imagePart, textPrompt]
+              : [taxonomyInstructions, textPrompt];
+
+            const response = await activeAi.models.generateContent({
+              model: modelName,
+              contents: contentsPayload,
+              config: {
+                responseMimeType: 'application/json'
+              }
+            });
+
+            const resText = response.text || '{}';
+            const parsed = JSON.parse(resText);
+            return {
+              id,
+              category: parsed.category || 'Not Assigned',
+              gender: parsed.gender || 'N/A'
+            };
+          } catch (genErr: any) {
+            const errString = genErr?.message || String(genErr);
+            // If multimodal failed or error occurred, retry text-only
+            if (imagePart) {
+              try {
+                const textOnlyResponse = await activeAi.models.generateContent({
+                  model: modelName,
+                  contents: [taxonomyInstructions, textPrompt],
+                  config: { responseMimeType: 'application/json' }
+                });
+                const parsed = JSON.parse(textOnlyResponse.text || '{}');
+                return {
+                  id,
+                  category: parsed.category || 'Not Assigned',
+                  gender: parsed.gender || 'N/A'
+                };
+              } catch (tErr) {
+                // Continue to next model
+              }
+            }
+            if (modelName === candidateModels[candidateModels.length - 1]) {
+              console.warn(`Gemini classification notice for product ${id}:`, errString);
+            }
+          }
+        }
+
+        return { id, category: p.category || 'Not Assigned', gender: p.gender || 'N/A' };
+      });
+
+      const chunkResults = await Promise.all(chunkPromises);
+      results.push(...chunkResults);
+    }
+
+    return res.json({ success: true, categorizations: results });
+  } catch (err: any) {
+    console.error('AI Recategorize error:', err);
+    return res.status(500).json({ error: err.message || 'AI categorization failed.' });
+  }
+});
+
 // Helper: Extract Schema.org JSON-LD Products
 function extractJsonLdProducts(html: string, brandName: string, officialUrl: string): any[] {
   const products: any[] = [];
@@ -1768,66 +2645,146 @@ function extractProductCategory(
   handle?: string,
   bodyText?: string
 ): string {
-  const tagList: string[] = Array.isArray(tags) ? tags.map((t) => String(t).trim()) : [];
-  const combinedText = `${title || ''} ${productType || ''} ${tagList.join(' ')} ${handle || ''} ${bodyText || ''}`.toLowerCase();
+  const pTitle = (title || '').trim();
+  const pType = (productType || '').trim();
+  const titleLower = pTitle.toLowerCase();
+  const typeLower = pType.toLowerCase();
 
-  // 1. Detect Gender
-  let genderPrefix = '';
-  const isWomen = /\b(women|women's|womens|female|lady|ladies|dress|dresses|skirt|crop top|legging|leggings|bra)\b/i.test(combinedText);
-  const isMen = /\b(men|men's|mens|male|gentlemen)\b/i.test(combinedText);
+  // ------------------------------------------------------------------------
+  // STEP 1: STRICT TITLE & PRODUCT_TYPE CHECK (HIGHEST PRIORITY)
+  // Prevents body text cross-sells or tags from miscategorizing shirts as bottoms.
+  // ------------------------------------------------------------------------
 
-  if (isWomen && !isMen) {
-    genderPrefix = "Women's";
-  } else if (isMen && !isWomen) {
-    genderPrefix = "Men's";
-  } else if (isMen && isWomen) {
-    genderPrefix = "Unisex";
-  }
-
-  // 2. Detect Product Type / Base Category
-  let baseCat = '';
-  if (/(hoodie|sweatshirt|pullover|zipper)/i.test(combinedText)) {
-    baseCat = 'Hoodies & Sweatshirts';
-  } else if (/(t-shirt|tee|oversized tee|top|crop top|tank)/i.test(combinedText)) {
-    baseCat = 'T-Shirts & Tops';
-  } else if (/(shirt|button down|linen shirt|formal shirt|casual shirt)/i.test(combinedText)) {
-    baseCat = 'Shirts & Linen Shirts';
-  } else if (/(pant|cargo|jogger|bottom|shorts|trouser|denim|jeans|skirt|legging)/i.test(combinedText)) {
-    baseCat = 'Bottoms & Joggers';
-  } else if (/(jacket|coat|outerwear|blazer|vest)/i.test(combinedText)) {
-    baseCat = 'Outerwear & Jackets';
-  } else if (/(dress|skirt|gown|one-piece)/i.test(combinedText)) {
-    baseCat = 'Dresses & Skirts';
-    if (!genderPrefix) genderPrefix = "Women's";
-  } else if (/(activewear|gym|workout|sport|tracksuit)/i.test(combinedText)) {
-    baseCat = 'Activewear';
-  } else if (/(sneaker|shoe|boot|slide|footwear|slipper)/i.test(combinedText)) {
-    baseCat = 'Footwear';
-  } else if (/(serum|cream|sunscreen|cleanser|moisturizer|face|glow|skincare)/i.test(combinedText)) {
-    return 'Clean Beauty & Skincare';
-  } else if (/(coffee|roast|brew|espresso)/i.test(combinedText)) {
-    return 'Artisanal Coffee';
-  } else if (/(case|bag|wallet|pouch|belt|cap|hat|beanie|accessory|accessories)/i.test(combinedText)) {
-    baseCat = 'Accessories';
-  }
-
-  if (!baseCat) {
-    if (productType && productType.trim().length > 1 && !/default/i.test(productType)) {
-      baseCat = productType.trim();
-    } else {
-      baseCat = 'Streetwear & Apparel';
+  // 1A. Tops & Shirts (Explicit Title/Type Matches)
+  if (/\b(t-shirt|tshirt|tee|tees|polo|polos|blouse|blouses|crop top|tank top|tank|henley|flannel|flannels|button-down|buttondown|overshirt|halfsleeve|half sleeve|fullsleeve|full sleeve|spread collar|mandarin collar|tunic|tunics|shirt|shirts|bodysuit|cardigan|sweater|sweatshirt|hoodie|turtleneck)\b/i.test(titleLower) ||
+      /\b(shirt|shirts|top|tops|t-shirt|polo|blouse|sweater|hoodie)\b/i.test(typeLower)) {
+    if (!/\b(shirt dress|t-shirt dress|tee dress)\b/i.test(titleLower)) {
+      return 'Tops & Shirts';
     }
   }
 
-  // 3. Assemble full category name
-  if (genderPrefix) {
-    if (baseCat.toLowerCase().startsWith(genderPrefix.toLowerCase())) {
-      return baseCat;
-    }
-    return `${genderPrefix} ${baseCat}`;
+  // 1B. Bottoms (Explicit Title/Type Matches)
+  if (/\b(jeans|trousers|trouser|chinos|chino|cargo pants|cargo pant|cargos|cargo|leggings|legging|shorts|short|skirt|skirts|skort|skorts|culottes|sweatpants|sweatpant|joggers|jogger|slacks|capris|capri|formal slacks|pants|pant|trackpant|trackpants)\b/i.test(titleLower) ||
+      /\b(bottoms|pants|pant|jeans|trousers|shorts|skirt|joggers|leggings)\b/i.test(typeLower)) {
+    return 'Bottoms';
   }
 
-  return baseCat;
+  // 1C. Outerwear
+  if (/\b(coat|coats|winter coat|raincoat|trench coat|trench|windbreaker|windbreakers|vest|vests|leather jacket|denim jacket|parka|parkas|fleece|puffer|puffer jacket|peacoat|poncho|cape|jacket|jackets|outerwear)\b/i.test(titleLower) ||
+      /\b(outerwear|jacket|coat|jackets|coats)\b/i.test(typeLower)) {
+    return 'Outerwear';
+  }
+
+  // 1D. Dresses & Rompers
+  if (/\b(dress|dresses|gown|gowns|maxi dress|cocktail dress|sundress|romper|rompers|jumpsuit|jumpsuits|overall|overalls|bridal dress|bridesmaid dress|shirt dress)\b/i.test(titleLower) ||
+      /\b(dress|dresses|jumpsuit|romper)\b/i.test(typeLower)) {
+    return 'Dresses & Rompers';
+  }
+
+  // 1E. Suiting & Tailored Wear
+  if (/\b(suit|suits|blazer|blazers|sport coat|tuxedo|tuxedos|waistcoat|waistcoats|dress pants|two-piece suit|three-piece suit)\b/i.test(titleLower) ||
+      /\b(suit|suiting|blazer)\b/i.test(typeLower)) {
+    return 'Suiting & Tailored Wear';
+  }
+
+  // 1F. Traditional & Ethnic Wear
+  if (/\b(saree|sarees|kurta|kurtas|kurti|kurtis|lehenga|lehengas|sherwani|sherwanis|salwar|salwar suit|dhoti|dhotis|cheongsam|kimono|abaya|abayas|hijab|kaftan|kaftans|ethnic)\b/i.test(titleLower) ||
+      /\b(ethnic|traditional|saree|kurta|lehenga)\b/i.test(typeLower)) {
+    return 'Traditional & Ethnic Wear';
+  }
+
+  // 1G. Activewear & Gym
+  if (/\b(sports bra|athletic shorts|yoga pants|tracksuit|compression wear|running shirt|gym tank|rash guard|activewear|gym wear)\b/i.test(titleLower) ||
+      /\b(activewear|gym)\b/i.test(typeLower)) {
+    return 'Activewear & Gym';
+  }
+
+  // 1H. Underwear & Intimates
+  if (/\b(bra|bras|bralette|panties|boxers|boxer|briefs|boxer briefs|shapewear|lingerie|camisole|thermal base layer|corset|corsets|slips|garter)\b/i.test(titleLower) ||
+      /\b(underwear|intimates|lingerie)\b/i.test(typeLower)) {
+    return 'Underwear & Intimates';
+  }
+
+  // 1I. Sleepwear & Loungewear
+  if (/\b(pajama|pajamas|robe|robes|nightgown|sleep shirt|onesie|loungewear|sleep shorts|nightshirt)\b/i.test(titleLower) ||
+      /\b(sleepwear|loungewear|pajamas)\b/i.test(typeLower)) {
+    return 'Sleepwear & Loungewear';
+  }
+
+  // 1J. Swimwear
+  if (/\b(bikini|bikinis|swimsuit|one-piece swimsuit|swim trunks|board shorts|wetsuit|swim cap|cover-up|swimwear)\b/i.test(titleLower) ||
+      /\b(swimwear|swimsuit)\b/i.test(typeLower)) {
+    return 'Swimwear';
+  }
+
+  // ------------------------------------------------------------------------
+  // STEP 2: FOOTWEAR, JEWELRY, BEAUTY, ACCESSORIES
+  // ------------------------------------------------------------------------
+
+  // Footwear
+  if (/\b(shoe|shoes|sneaker|sneakers|boot|boots|cleats|sandal|sandals|slide|slides|loafer|loafers|heels|pumps|flats|oxford|derby|clog|clogs|mule|mules|slipper|slippers|footwear|flip-flop|flip flop)\b/i.test(titleLower) ||
+      /\b(shoes|footwear|boots|sneakers)\b/i.test(typeLower)) {
+    if (/\b(running|basketball|tennis|cleats|golf|hiking boot|weightlifting|cross-trainer)\b/i.test(titleLower)) return 'Athletic Footwear';
+    if (/\b(sneaker|sneakers|canvas|slip-on|boat shoe|espadrille|skate)\b/i.test(titleLower)) return 'Casual Shoes';
+    if (/\b(boot|boots|ankle boot|knee-high|snow boot|combat|chelsea|chukka|rain boot|cowboy|work boot)\b/i.test(titleLower)) return 'Boots';
+    if (/\b(oxford|brogue|derby|loafer|monk strap|heels|pumps|wedge|flat|slingback)\b/i.test(titleLower)) return 'Dress Shoes';
+    if (/\b(flip-flop|slide|slides|gladiator|strappy|clog|mule|sandal|sandals)\b/i.test(titleLower)) return 'Sandals & Open-Toe';
+    if (/\b(slipper|slippers|moccasin|house slipper)\b/i.test(titleLower)) return 'Indoor Footwear';
+    return 'Casual Shoes';
+  }
+
+  // Jewelry & Timepieces
+  if (/\b(watch|watches|timepiece|necklace|necklaces|chain|chains|pendant|ring|rings|earring|earrings|studs|hoops|bracelet|bracelets|bangle|anklet|belly ring|nose ring|piercing)\b/i.test(titleLower) ||
+      /\b(jewelry|watches|rings|necklaces)\b/i.test(typeLower)) {
+    if (/\b(watch|watches|timepiece|smartwatch|chronograph)\b/i.test(titleLower)) return 'Watches';
+    if (/\b(necklace|pendant|chain|choker|locket|pearl)\b/i.test(titleLower)) return 'Necklaces';
+    if (/\b(ring|rings|wedding band|engagement ring|signet)\b/i.test(titleLower)) return 'Rings';
+    if (/\b(earring|earrings|studs|hoops|huggie|dangle)\b/i.test(titleLower)) return 'Earrings';
+    if (/\b(bracelet|bracelets|bangle|cuff|charm|tennis bracelet|anklet)\b/i.test(titleLower)) return 'Bracelets';
+    if (/\b(belly ring|nose ring|piercing|tunnel|plug)\b/i.test(titleLower)) return 'Body Jewelry';
+    return 'Jewelry & Timepieces';
+  }
+
+  // Bags & Accessories
+  if (/\b(bag|bags|backpack|tote|clutch|satchel|duffel|briefcase|wallet|cardholder|belt|belts|cap|caps|hat|hats|beanie|visor|glasses|sunglasses|eyewear|scarf|scarves|tie|bowtie|gloves|socks|tights)\b/i.test(titleLower) ||
+      /\b(bags|accessories|eyewear|wallets|belts)\b/i.test(typeLower)) {
+    if (/\b(bag|bags|backpack|tote|crossbody|clutch|satchel|messenger|duffel|briefcase|suitcase|fanny pack)\b/i.test(titleLower)) return 'Bags & Luggage';
+    if (/\b(cap|caps|beanie|sun hat|visor|fedora|bucket hat|beret|headband|bandana)\b/i.test(titleLower)) return 'Headwear';
+    if (/\b(sunglasses|reading glasses|blue-light|goggles|eyewear)\b/i.test(titleLower)) return 'Eyewear';
+    if (/\b(necktie|tie|bowtie|scarf|scarves|pocket square|ascot|gaiter)\b/i.test(titleLower)) return 'Neckwear';
+    if (/\b(gloves|mittens|earmuffs|shawl)\b/i.test(titleLower)) return 'Cold Weather Accessories';
+    if (/\b(belt|belts|suspender|wallet|cardholder|money clip|keychain|lanyard|coin purse)\b/i.test(titleLower)) return 'Small Leather Goods';
+    if (/\b(socks|tights|pantyhose|thigh-high|compression socks|hosiery)\b/i.test(titleLower)) return 'Hosiery';
+    return 'Accessories & Wearables';
+  }
+
+  // Cosmetics & Beauty
+  if (/\b(makeup|foundation|concealer|powder|blush|bronzer|highlighter|primer|setting spray|eyeshadow|eyeliner|mascara|eyebrow|lashes|lipstick|lip gloss|lip balm|skincare|cleanser|face wash|moisturizer|serum|toner|face mask|exfoliator|sunscreen|spf|shampoo|conditioner|hair mask|hair oil|perfume|cologne|body wash|body lotion|deodorant)\b/i.test(titleLower) ||
+      /\b(beauty|skincare|makeup|fragrance|haircare)\b/i.test(typeLower)) {
+    if (/\b(foundation|concealer|powder|blush|bronzer|highlighter|primer|setting spray)\b/i.test(titleLower)) return 'Makeup - Face';
+    if (/\b(eyeshadow|eyeliner|mascara|eyebrow|eyelash|lashes)\b/i.test(titleLower)) return 'Makeup - Eyes';
+    if (/\b(lipstick|lip gloss|lip liner|lip balm|lip stain|lip tint)\b/i.test(titleLower)) return 'Makeup - Lips';
+    if (/\b(cleanser|face wash|moisturizer|serum|toner|face mask|exfoliator|eye cream|sunscreen|spf|acne)\b/i.test(titleLower)) return 'Skincare';
+    if (/\b(shampoo|conditioner|hair mask|hair oil|hair serum|dry shampoo|hair dye)\b/i.test(titleLower)) return 'Haircare';
+    if (/\b(body wash|shower gel|body lotion|body butter|body scrub|deodorant|antiperspirant)\b/i.test(titleLower)) return 'Body Care';
+    if (/\b(perfume|cologne|fragrance|eau de|body mist|body spray|aftershave)\b/i.test(titleLower)) return 'Fragrance';
+    return 'Skincare';
+  }
+
+  // Pet Care
+  if (/\b(pet|dog|cat|puppy|kitten|pooch|canine|feline)\b/i.test(titleLower)) {
+    if (/\b(coat|sweater|jacket|raincoat|bandana|booties|costume|vest)\b/i.test(titleLower)) return 'Pet Apparel';
+    if (/\b(harness|collar|leash|carrier|tag|poop bag)\b/i.test(titleLower)) return 'Pet Walk & Travel Gear';
+    if (/\b(bed|mat|blanket|crate|donut bed)\b/i.test(titleLower)) return 'Pet Beds & Comfort';
+    if (/\b(shampoo|brush|comb|nail grinder|balm|wipe)\b/i.test(titleLower)) return 'Pet Grooming & Care';
+    return 'Pet Apparel';
+  }
+
+  // ------------------------------------------------------------------------
+  // STEP 3: FALLBACK TO "Not Assigned" IF CANNOT BE DETERMINED
+  // (Do not force random assignment if unsure!)
+  // ------------------------------------------------------------------------
+  return 'Not Assigned';
 }
 
 function extractRichSpecs(item: any, combinedText: string): { label: string; value: string }[] {

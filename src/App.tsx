@@ -13,6 +13,7 @@ import { HandoffSuccessModal } from './components/HandoffSuccessModal';
 import { SavingsAnalyticsModal } from './components/SavingsAnalyticsModal';
 import { LandingPage } from './components/LandingPage';
 import { LoginPage } from './components/LoginPage';
+import { AdminLoginPage } from './components/AdminLoginPage';
 import { AdminDashboard } from './components/AdminDashboard';
 import { Forbidden403 } from './components/Forbidden403';
 import { GptTryOnStudio } from './components/GptTryOnStudio';
@@ -55,17 +56,37 @@ export default function App() {
     const path = window.location.pathname.toLowerCase();
     if (path.startsWith('/admin')) return 'admin';
     if (path.startsWith('/login')) return 'login';
-    if (path.startsWith('/explore') || path.startsWith('/dashboard')) return 'explore';
+    if (path.startsWith('/products') || path.startsWith('/explore') || path.startsWith('/dashboard')) return 'explore';
     return 'landing';
   });
+
+  // Admin View Sub-State ('login' | 'dashboard' | 'denied') - Always defaults to 'login' when visiting /admin
+  const [adminState, setAdminState] = useState<'login' | 'dashboard' | 'denied'>('login');
+
+  // Ensure URL path matches current view
+  useEffect(() => {
+    const path = window.location.pathname.toLowerCase();
+    if (currentView === 'landing' && path !== '/') {
+      window.history.replaceState({}, '', '/');
+    } else if (currentView === 'admin' && !path.startsWith('/admin')) {
+      window.history.replaceState({}, '', '/admin');
+    } else if (currentView === 'login' && !path.startsWith('/login')) {
+      window.history.replaceState({}, '', '/login');
+    } else if (currentView === 'explore' && !path.startsWith('/explore') && !path.startsWith('/products') && !path.startsWith('/dashboard')) {
+      window.history.replaceState({}, '', '/explore');
+    }
+  }, [currentView]);
 
   // Handle URL navigation and browser back/forward buttons
   useEffect(() => {
     const handlePopState = () => {
       const path = window.location.pathname.toLowerCase();
-      if (path.startsWith('/admin')) setCurrentView('admin');
+      if (path.startsWith('/admin')) {
+        setCurrentView('admin');
+        setAdminState('login');
+      }
       else if (path.startsWith('/login')) setCurrentView('login');
-      else if (path.startsWith('/explore') || path.startsWith('/dashboard')) setCurrentView('explore');
+      else if (path.startsWith('/products') || path.startsWith('/explore') || path.startsWith('/dashboard')) setCurrentView('explore');
       else setCurrentView('landing');
     };
 
@@ -96,7 +117,10 @@ export default function App() {
 
   const navigateTo = (view: 'landing' | 'login' | 'explore' | 'admin') => {
     setCurrentView(view);
-    const targetPath = view === 'landing' ? '/' : `/${view}`;
+    if (view === 'admin') {
+      setAdminState('login');
+    }
+    const targetPath = view === 'landing' ? '/' : view === 'explore' ? '/explore' : `/${view}`;
     if (window.location.pathname !== targetPath) {
       window.history.pushState({}, '', targetPath);
     }
@@ -269,36 +293,48 @@ export default function App() {
   // ROUTE 3: /admin Guard & Dashboard View
   // --------------------------------------------------------------------------
   if (currentView === 'admin') {
-    // 1. If unauthenticated -> Redirect to /login
-    if (!currentUser) {
+    // 1. Authorized Admin logged in & verified -> Render Admin Dashboard
+    if (adminState === 'dashboard' && currentUser?.email === 'imamir760@gmail.com') {
       return (
-        <LoginPage
-          onLoginSuccess={handleLoginSuccess}
+        <AdminDashboard
+          currentUser={currentUser}
+          onLogout={handleLogout}
           onNavigateHome={() => navigateTo('landing')}
-          initialErrorMessage="Authentication required. Please sign in to access the admin portal."
+          onProductsAddedToGlobalCatalog={handleProductsAddedFromCrawler}
         />
       );
     }
 
-    // 2. If authenticated user email is NOT in whitelist (imamir760@gmail.com) -> 403 Forbidden
-    if (currentUser.email !== 'imamir760@gmail.com') {
+    // 2. Login succeeded but account is NOT in admin whitelist -> Render Access Restricted page
+    if (adminState === 'denied') {
       return (
         <Forbidden403
           currentUser={currentUser}
           onNavigateHome={() => navigateTo('landing')}
           onLogout={handleLogout}
-          onSwitchUser={() => navigateTo('login')}
+          onSwitchUser={() => setAdminState('login')}
         />
       );
     }
 
-    // 3. Authorized Admin (imamir760@gmail.com) -> Render Admin Dashboard
+    // 3. Default for /admin: Always show Admin Login Page first!
     return (
-      <AdminDashboard
-        currentUser={currentUser}
-        onLogout={handleLogout}
+      <AdminLoginPage
+        onAdminLoginSuccess={(session) => {
+          setCurrentUser(session);
+          try {
+            localStorage.setItem('shopscoper_user_session', JSON.stringify(session));
+          } catch (e) {}
+          setAdminState('dashboard');
+        }}
+        onAdminLoginDenied={(session) => {
+          setCurrentUser(session);
+          try {
+            localStorage.setItem('shopscoper_user_session', JSON.stringify(session));
+          } catch (e) {}
+          setAdminState('denied');
+        }}
         onNavigateHome={() => navigateTo('landing')}
-        onProductsAddedToGlobalCatalog={handleProductsAddedFromCrawler}
       />
     );
   }

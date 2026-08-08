@@ -422,7 +422,7 @@ export const GptTryOnStudio: React.FC<GptTryOnStudioProps> = ({
             <span className="text-xs font-mono font-bold text-purple-900 shrink-0">OpenAI Key:</span>
             <input
               type="password"
-              placeholder="sk-proj-..."
+              placeholder="sk-..."
               value={customApiKey}
               onChange={(e) => setCustomApiKey(e.target.value)}
               className="flex-1 px-3 py-1 rounded-xl border border-purple-200 bg-white text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-purple-500"

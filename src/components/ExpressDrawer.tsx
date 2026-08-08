@@ -48,6 +48,32 @@ export const ExpressDrawer: React.FC<ExpressDrawerProps> = ({
     setTimeout(() => {
       setIsHandoffProgress(false);
       setHandoffStep(0);
+
+      // Auto-apply best available discount code on merchant's checkout screen
+      const activeCode = (promoApplied ? (product.active_promo_code || product.couponCode || 'D2C100') : '').trim();
+      let storeDom = product.store_domain || product.officialUrl || '';
+      if (storeDom && !storeDom.startsWith('http://') && !storeDom.startsWith('https://')) {
+        storeDom = 'https://' + storeDom;
+      }
+
+      let checkoutUrl = product.cart_permalink || '';
+      if (!checkoutUrl && storeDom && product.variant_id) {
+        checkoutUrl = activeCode
+          ? `${storeDom}/discount/${encodeURIComponent(activeCode)}?redirect=/cart/${product.variant_id}:1`
+          : `${storeDom}/cart/${product.variant_id}:1?checkout`;
+      } else if (checkoutUrl && activeCode && !checkoutUrl.includes('/discount/')) {
+        const varId = product.variant_id;
+        if (varId && storeDom) {
+          checkoutUrl = `${storeDom}/discount/${encodeURIComponent(activeCode)}?redirect=/cart/${varId}:1`;
+        } else if (!checkoutUrl.includes('discount=')) {
+          checkoutUrl += (checkoutUrl.includes('?') ? '&' : '?') + `discount=${encodeURIComponent(activeCode)}`;
+        }
+      }
+
+      if (checkoutUrl) {
+        window.open(checkoutUrl, '_blank');
+      }
+
       onHandoffSuccess(product, userAddress, finalTotal);
     }, 3600);
   };
@@ -175,25 +201,30 @@ export const ExpressDrawer: React.FC<ExpressDrawerProps> = ({
                 </div>
 
                 {/* Direct Promo Coupon */}
-                {product.couponCode && (
-                  <div className="p-4 rounded-2xl bg-red-50 border border-red-200 space-y-2">
+                {(product.couponCode || product.active_promo_code) && (
+                  <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-300 space-y-2">
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-xs font-mono font-bold text-red-600">
-                        <Tag className="w-4 h-4 text-red-600" />
-                        <span>Direct Brand Token Applied</span>
+                      <div className="flex items-center gap-2 text-xs font-mono font-bold text-emerald-700">
+                        <Tag className="w-4 h-4 text-emerald-600" />
+                        <span>Best Storefront Discount Auto-Applied</span>
                       </div>
                       <button
                         onClick={() => setPromoApplied(!promoApplied)}
-                        className="text-[11px] font-mono text-slate-500 hover:text-red-600 font-bold"
+                        className="text-[11px] font-mono text-slate-500 hover:text-emerald-700 font-bold cursor-pointer"
                       >
                         {promoApplied ? 'Remove' : 'Apply'}
                       </button>
                     </div>
 
                     <div className="flex items-center justify-between text-xs font-mono">
-                      <span className="text-slate-900 font-bold">{product.couponCode}</span>
-                      <span className="text-red-600 font-bold">-₹{product.couponDiscount || 150}</span>
+                      <span className="text-slate-900 font-bold bg-white px-2 py-0.5 rounded border border-emerald-200">
+                        {product.active_promo_code || product.couponCode}
+                      </span>
+                      <span className="text-emerald-700 font-extrabold">-₹{product.couponDiscount || 150}</span>
                     </div>
+                    <p className="text-[10px] text-emerald-800 font-mono">
+                      ✨ Code will be auto-submitted via Storefront API redirect on checkout.
+                    </p>
                   </div>
                 )}
 
