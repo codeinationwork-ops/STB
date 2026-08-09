@@ -17,6 +17,7 @@ import { AdminLoginPage } from './components/AdminLoginPage';
 import { AdminDashboard } from './components/AdminDashboard';
 import { Forbidden403 } from './components/Forbidden403';
 import { GptTryOnStudio } from './components/GptTryOnStudio';
+import { TryOnPaymentModal } from './components/TryOnPaymentModal';
 
 import {
   INITIAL_PRODUCTS,
@@ -34,13 +35,13 @@ import {
   subscribeWishlist,
   toggleWishlistInDb,
   saveOrderToDb,
-  saveUserProfileToDb
+  saveUserProfileToDb,
+  fetchUserTryOnCredits,
+  saveUserTryOnCredits
 } from './lib/firestoreService';
 import { preloadImageUrls } from './lib/imageUtils';
 
 export default function App() {
-  const userId = 'demo-user-1';
-
   // Current Authentication Session State
   const [currentUser, setCurrentUser] = useState<UserSession | null>(() => {
     try {
@@ -50,6 +51,26 @@ export default function App() {
       return null;
     }
   });
+
+  // Distinct User ID for Wishlist & Orders per authenticated or guest session
+  const effectiveUserId = useMemo(() => {
+    if (currentUser?.email) {
+      return currentUser.email.toLowerCase().trim().replace(/[^a-zA-Z0-9]/g, '_');
+    }
+    if (auth.currentUser?.uid) {
+      return auth.currentUser.uid;
+    }
+    try {
+      let guestId = localStorage.getItem('shopscoper_guest_id');
+      if (!guestId) {
+        guestId = 'guest_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now();
+        localStorage.setItem('shopscoper_guest_id', guestId);
+      }
+      return guestId;
+    } catch {
+      return 'guest_user';
+    }
+  }, [currentUser]);
 
   // Navigation Route State ('landing' | 'login' | 'explore' | 'admin')
   const [currentView, setCurrentView] = useState<'landing' | 'login' | 'explore' | 'admin'>(() => {
@@ -163,7 +184,7 @@ export default function App() {
   const [addresses, setAddresses] = useState<UserAddress[]>(MOCK_ADDRESSES);
   const [defaultAddress, setDefaultAddress] = useState<UserAddress>(MOCK_ADDRESSES[0]);
 
-  // Load / Seed Firestore Products & Subscribe to Wishlist
+  // Load / Seed Firestore Products
   useEffect(() => {
     getOrSeedProducts([]).then((loadedProducts) => {
       setProducts(loadedProducts);
@@ -174,13 +195,25 @@ export default function App() {
       const urlsToPreload = loadedProducts.flatMap((p) => p.images || []).filter(Boolean);
       preloadImageUrls(urlsToPreload);
     });
+  }, []);
 
-    const unsubscribe = subscribeWishlist(userId, (ids) => {
+  // Subscribe to wishlist changes & Try-On credits for the specific user
+  const [tryOnCredits, setTryOnCredits] = useState<number>(1);
+  const [isTryOnPaymentOpen, setIsTryOnPaymentOpen] = useState<boolean>(false);
+  const [pendingTryOnGarment, setPendingTryOnGarment] = useState<{ product?: Product | null; imageUrl?: string | null }>({});
+
+  useEffect(() => {
+    if (!effectiveUserId) return;
+    const unsubscribe = subscribeWishlist(effectiveUserId, (ids) => {
       setWishlistIds(ids);
     });
 
+    fetchUserTryOnCredits(effectiveUserId).then((credits) => {
+      setTryOnCredits(credits);
+    });
+
     return () => unsubscribe();
-  }, []);
+  }, [effectiveUserId]);
 
   // Modal / Drawer Controls
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
@@ -196,6 +229,28 @@ export default function App() {
   const handleOpenGptTryOn = (product?: Product | null, imageUrl?: string | null) => {
     setGptTryOnGarment({ product, imageUrl });
     setIsGptTryOnOpen(true);
+  };
+
+  const handleTryOnAttempt = (product?: Product | null, imageUrl?: string | null) => {
+    if (tryOnCredits > 0) {
+      const nextCredits = tryOnCredits - 1;
+      setTryOnCredits(nextCredits);
+      saveUserTryOnCredits(effectiveUserId, nextCredits);
+      handleOpenGptTryOn(product, imageUrl);
+    } else {
+      setPendingTryOnGarment({ product, imageUrl });
+      setIsTryOnPaymentOpen(true);
+    }
+  };
+
+  const handleTryOnPaymentSuccess = (addedCredits: number) => {
+    const newTotal = tryOnCredits + addedCredits;
+    // Save new total, then consume 1 for immediate pending launch
+    const finalCredits = Math.max(0, newTotal - 1);
+    setTryOnCredits(finalCredits);
+    saveUserTryOnCredits(effectiveUserId, finalCredits);
+    setIsTryOnPaymentOpen(false);
+    handleOpenGptTryOn(pendingTryOnGarment.product, pendingTryOnGarment.imageUrl);
   };
 
   const handleProductsAddedFromCrawler = (newProducts: Product[]) => {
@@ -226,7 +281,7 @@ export default function App() {
   // Handlers
   const handleToggleWishlist = (product: Product) => {
     const isWishlisted = wishlistIds.includes(product.id);
-    toggleWishlistInDb(userId, product.id, isWishlisted);
+    toggleWishlistInDb(effectiveUserId, product.id, isWishlisted);
   };
 
   const handleOpenExpressBuy = (product: Product) => {
@@ -245,7 +300,7 @@ export default function App() {
     const trackingToken = `TRK-${product.brand.toUpperCase()}-${Math.floor(10000 + Math.random() * 90000)}`;
     
     const orderObj = {
-      userId,
+      userId: effectiveUserId,
       product,
       address,
       totalAmount: finalTotal,
@@ -370,6 +425,7 @@ export default function App() {
         wishlistCount={wishlistIds.length}
         totalSaved={totalSaved}
         currentUser={currentUser}
+        tryOnCredits={tryOnCredits}
         onLogout={handleLogout}
         onNavigateAdmin={() => navigateTo('admin')}
         onToggleWishlist={handleToggleWishlist}
@@ -377,7 +433,7 @@ export default function App() {
         onQuickView={handleOpenQuickView}
         onOpenWishlist={() => setIsWishlistOpen(true)}
         onOpenAddressVault={() => setIsAddressVaultOpen(true)}
-        onOpenGptTryOn={handleOpenGptTryOn}
+        onOpenGptTryOn={handleTryOnAttempt}
       />
 
       {/* Slide-Over Drawers & Modals */}
@@ -386,6 +442,12 @@ export default function App() {
         onClose={() => setIsGptTryOnOpen(false)}
         garmentProduct={gptTryOnGarment.product}
         garmentImageUrl={gptTryOnGarment.imageUrl}
+      />
+      <TryOnPaymentModal
+        isOpen={isTryOnPaymentOpen}
+        onClose={() => setIsTryOnPaymentOpen(false)}
+        onPaymentSuccess={handleTryOnPaymentSuccess}
+        productName={pendingTryOnGarment.product?.name}
       />
       <ExpressDrawer
         isOpen={isExpressDrawerOpen}
@@ -400,8 +462,13 @@ export default function App() {
         isOpen={isWishlistOpen}
         onClose={() => setIsWishlistOpen(false)}
         wishlistProducts={wishlistProducts}
+        tryOnCredits={tryOnCredits}
         onRemoveFromWishlist={(id) => setWishlistIds((prev) => prev.filter((i) => i !== id))}
         onExpressBuy={handleOpenExpressBuy}
+        onTryOn={(p) => {
+          setIsWishlistOpen(false);
+          handleTryOnAttempt(p);
+        }}
       />
 
       <OmniSearchModal
@@ -419,9 +486,10 @@ export default function App() {
         isWishlisted={activeQuickViewProduct ? wishlistIds.includes(activeQuickViewProduct.id) : false}
         onToggleWishlist={handleToggleWishlist}
         onExpressBuy={handleOpenExpressBuy}
+        tryOnCredits={tryOnCredits}
         onTryOn={(p) => {
           setIsQuickViewOpen(false);
-          handleOpenGptTryOn(p);
+          handleTryOnAttempt(p);
         }}
         wishlistCount={wishlistIds.length}
         onOpenSearch={() => {

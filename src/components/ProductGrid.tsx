@@ -6,6 +6,7 @@ import { ProductCard } from './ProductCard';
 import { safeNumber } from '../lib/firestoreService';
 import { matchesCategoryFilter, MALE_CATEGORIES, FEMALE_CATEGORIES } from './GeminiSearchLanding';
 import { verifyProductsWithGeminiAI, getAICachedVerification } from '../lib/geminiCategoryVerifier';
+import { strictKeywordMatch } from '../lib/strictSearch';
 
 interface ProductGridProps {
   products: Product[];
@@ -127,20 +128,12 @@ export const ProductGrid: React.FC<ProductGridProps> = ({
           if (p.gender !== 'Unisex') return false;
         }
       }
-      // Search Query Filter
+      // Strict Search Query Filter (Exact Word Boundaries & Tokenizer)
       if (searchQuery.trim() !== '') {
-        const queryTokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
-        const searchable = `${p.name} ${p.brand} ${p.category} ${p.description || ''} ${p.specs.map(s => `${s.label} ${s.value}`).join(' ')}`.toLowerCase();
-        
-        const matchesAllTokens = queryTokens.every((token) => {
-          if (searchable.includes(token)) return true;
-          if ((token === 'hoodie' || token === 'hoodies') && (searchable.includes('hoodie') || searchable.includes('hoodies') || searchable.includes('sweatshirt') || searchable.includes('pullover'))) {
-            return true;
-          }
+        const extraText = `${p.brand} ${p.category} ${p.specs.map(s => `${s.label} ${s.value}`).join(' ')}`;
+        if (!strictKeywordMatch(p.name, p.description || '', searchQuery, extraText)) {
           return false;
-        });
-
-        if (!matchesAllTokens) return false;
+        }
       }
       // Price Drop Filter
       if (showOnlyPriceDrops) {

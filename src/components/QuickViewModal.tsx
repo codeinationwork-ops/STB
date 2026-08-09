@@ -15,6 +15,7 @@ interface QuickViewModalProps {
   wishlistCount?: number;
   onOpenSearch?: () => void;
   onOpenWishlist?: () => void;
+  tryOnCredits?: number;
 }
 
 export const QuickViewModal: React.FC<QuickViewModalProps> = ({
@@ -25,9 +26,10 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({
   onToggleWishlist,
   onExpressBuy,
   onTryOn,
-  wishlistCount = 9,
+  wishlistCount = 0,
   onOpenSearch,
   onOpenWishlist,
+  tryOnCredits = 1,
 }) => {
   const [selectedImgIndex, setSelectedImgIndex] = useState(0);
 
@@ -108,9 +110,11 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({
                 aria-label="Wishlist"
               >
                 <Heart className={`w-5 h-5 stroke-[2.5] ${isWishlisted ? 'fill-red-500 text-red-500' : 'text-slate-900'}`} />
-                <span className="absolute -top-1 -right-1 bg-[#FF2D55] text-white font-mono text-[10px] font-extrabold w-4 h-4 sm:w-5 sm:h-5 rounded-full flex items-center justify-center border-2 border-white shadow-md">
-                  {wishlistCount}
-                </span>
+                {wishlistCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-[#FF2D55] text-white font-mono text-[10px] font-extrabold w-4 h-4 sm:w-5 sm:h-5 rounded-full flex items-center justify-center border-2 border-white shadow-md">
+                    {wishlistCount}
+                  </span>
+                )}
               </button>
             </div>
           </header>
@@ -189,7 +193,7 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({
                   className="py-2.5 sm:py-3 px-3.5 rounded-xl bg-gradient-to-r from-[#6C3BFF] via-[#8B5CFF] to-[#FF2D55] hover:opacity-95 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md shadow-purple-500/20 active:scale-[0.98] transition-all"
                 >
                   <Sparkles className="w-4 h-4 text-amber-300 fill-amber-300" />
-                  <span>Try-On</span>
+                  <span>Try-On ({tryOnCredits})</span>
                 </button>
 
                 {/* Shop Now Button (Dark Navy) */}

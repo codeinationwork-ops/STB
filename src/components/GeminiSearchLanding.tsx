@@ -33,8 +33,9 @@ import {
   X
 } from 'lucide-react';
 import { Product, UserAddress, UserSession } from '../types';
-import { logSearchQueryToDb, getLiveProductsFromDb, safeNumber } from '../lib/firestoreService';
+import { logSearchQueryToDb, getLiveProductsFromDb, safeNumber, normalizeStoreAndBrandName } from '../lib/firestoreService';
 import { verifyProductsWithGeminiAI, getAICachedVerification } from '../lib/geminiCategoryVerifier';
+import { normalizeQuery, normalizeText } from '../lib/strictSearch';
 import { BrandLogo } from './BrandLogo';
 import { VirtualTryOnStudio } from './VirtualTryOnStudio';
 import { BrandRequestModals } from './BrandRequestModals';
@@ -57,6 +58,7 @@ interface GeminiSearchLandingProps {
   onOpenCrawler?: () => void;
   onOpenGptTryOn?: (product?: Product | null, imageUrl?: string | null) => void;
   onSwitchToDashboard?: () => void;
+  tryOnCredits?: number;
 }
 
 interface SearchIntentData {
@@ -194,7 +196,8 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
   onOpenAddressVault,
   onOpenCrawler,
   onOpenGptTryOn,
-  onSwitchToDashboard
+  onSwitchToDashboard,
+  tryOnCredits = 1
 }) => {
   const [query, setQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -570,28 +573,6 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  /**
-   * Normalizes queries to handle common clothing terms, hyphens, and plurals.
-   */
-  const normalizeQuery = (query: string): string => {
-    if (!query) return '';
-    let cleaned = query.trim().toLowerCase();
-    // Normalize T-Shirt & Tee variations to a single token 'tshirt'
-    cleaned = cleaned.replace(/\b(t[\s\-]?shirts?|tees?)\b/gi, 'tshirt');
-    return cleaned;
-  };
-
-  /**
-   * Prepares product text fields for strict keyword scanning.
-   */
-  const normalizeText = (text: string): string => {
-    if (!text) return '';
-    let cleaned = text.toLowerCase();
-    // Convert "t-shirt", "t shirt", "t-shirts", "tee", "tees" in product text to "tshirt"
-    cleaned = cleaned.replace(/\b(t[\s\-]?shirts?|tees?)\b/gi, 'tshirt');
-    return cleaned;
-  };
-
   // Strict Search Matching Engine (Exact Word Boundaries, No Cross-Category Leakage)
   const filterProductsBySearchIntent = (
     allProducts: Product[],
@@ -721,7 +702,7 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
     setSearchResult(null);
 
     // Log search query to Firestore DB
-    logSearchQueryToDb('demo-user-1', trimmed);
+    logSearchQueryToDb(currentUser?.email || 'guest-user', trimmed);
 
     // 1. INSTANT SIMULTANEOUS LOCAL MATCH (In Milliseconds!)
     const pool = products.length > 0 ? products : await getLiveProductsFromDb(products);
@@ -908,12 +889,32 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
     setActiveSearchQuery(null);
     setSearchResult(null);
     setQuery('');
-    setMatchedProducts([]);
-    setSelectedRandomProduct(null);
-    setSelectedGenderMode(null);
-    if (typeof window !== 'undefined' && !window.location.pathname.toLowerCase().startsWith('/explore')) {
-      window.history.pushState({}, '', '/explore');
+
+    // Retain current gender mode or derive from the currently viewed product
+    const targetGender = selectedGenderMode || (selectedRandomProduct ? (isMaleProduct(selectedRandomProduct) ? 'Men' : 'Women') : 'Men');
+
+    if (!selectedGenderMode) {
+      setSelectedGenderMode(targetGender);
     }
+
+    // Restore catalog products under active gender & budget filters
+    applyActiveFilters(
+      targetGender,
+      isBudgetApplied ? appliedMinBudget : null,
+      isBudgetApplied ? appliedMaxBudget : null
+    );
+
+    // Keep the current product showcase active or pick from catalog if none selected
+    if (!selectedRandomProduct && products.length > 0) {
+      const genderPool = products.filter((p) => (targetGender === 'Men' ? isMaleProduct(p) : isFemaleProduct(p)));
+      setSelectedRandomProduct(genderPool.length > 0 ? genderPool[0] : products[0]);
+    }
+
+    // Keep state on /products path so user stays on the showcase feed
+    if (typeof window !== 'undefined' && !window.location.pathname.toLowerCase().startsWith('/products')) {
+      window.history.pushState({}, '', '/products');
+    }
+
     if (inputRef.current) {
       inputRef.current.focus();
     }
@@ -958,6 +959,20 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
 
           {/* Header Right Actions */}
           <div className="flex items-center gap-2.5 sm:gap-3">
+
+            {/* Try-On Button in Top Bar */}
+            <button
+              onClick={() => {
+                if (onOpenGptTryOn) {
+                  onOpenGptTryOn(selectedRandomProduct, selectedRandomProduct?.images?.[0]);
+                }
+              }}
+              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-mono text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer transition-all"
+              title="AI Virtual Try-On"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300 fill-amber-300" />
+              <span className="hidden sm:inline">Try-On ({tryOnCredits})</span>
+            </button>
 
             {/* Shopify Connect Scraper Modal Button */}
             <button
@@ -1108,9 +1123,11 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
                       title="Wishlist"
                     >
                       <Heart className="w-5 h-5 fill-[#FF2D55] text-[#FF2D55] stroke-none" />
-                      <span className="absolute -top-1 -right-1 bg-[#FF2D55] text-white text-[10px] font-extrabold w-4 h-4 sm:w-5 sm:h-5 rounded-full flex items-center justify-center shadow-md font-mono border-2 border-white">
-                        {wishlistCount > 0 ? wishlistCount : '9'}
-                      </span>
+                      {wishlistCount > 0 && (
+                        <span className="absolute -top-1 -right-1 bg-[#FF2D55] text-white text-[10px] font-extrabold w-4 h-4 sm:w-5 sm:h-5 rounded-full flex items-center justify-center shadow-md font-mono border-2 border-white">
+                          {wishlistCount}
+                        </span>
+                      )}
                     </button>
                   </div>
 
@@ -1220,7 +1237,11 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
                       <div className="space-y-0.5 pr-2">
                         {/* Brand */}
                         <p className="text-[#A855F7] font-extrabold text-[11px] tracking-wider uppercase drop-shadow-xs">
-                          {selectedRandomProduct.brand || 'MULMUL'}
+                          {normalizeStoreAndBrandName(
+                            selectedRandomProduct.brand,
+                            selectedRandomProduct.officialUrl || selectedRandomProduct.store_domain,
+                            (selectedRandomProduct as any).vendor || (selectedRandomProduct as any).store_name
+                          )}
                         </p>
 
                         {/* Product Name */}
@@ -1274,7 +1295,7 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
                         className="py-2.5 sm:py-3 px-3.5 rounded-xl bg-gradient-to-r from-[#6C3BFF] via-[#8B5CFF] to-[#FF2D55] hover:opacity-95 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md shadow-purple-500/30 active:scale-[0.98] transition-all cursor-pointer"
                       >
                         <Sparkles className="w-4 h-4 text-amber-300 fill-amber-300" />
-                        <span>Try-On</span>
+                        <span>Try-On ({tryOnCredits})</span>
                       </button>
 
                       {/* Shop Now Button (Dark Navy) */}

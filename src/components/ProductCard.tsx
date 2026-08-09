@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Zap, Heart, ShieldCheck, Sparkles, ShoppingBag, Eye, TrendingDown, Clock, CheckCircle2, Star, ArrowUpRight, Copy, Check } from 'lucide-react';
 import { Product } from '../types';
 import { getOptimizedImageUrl, DEFAULT_PRODUCT_FALLBACK } from '../lib/imageUtils';
+import { normalizeStoreAndBrandName } from '../lib/firestoreService';
 
 interface ProductCardProps {
   product: Product;
@@ -140,7 +141,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           <div className="flex items-center justify-between text-xs text-zinc-400 mb-1.5 font-mono">
             <span className="text-indigo-400 font-bold uppercase tracking-wider flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              {product.brand}
+              {normalizeStoreAndBrandName(product.brand, product.officialUrl || product.store_domain, (product as any).vendor || (product as any).store_name)}
             </span>
             <div className="flex items-center gap-1 text-amber-400 font-bold">
               <Star className="w-3.5 h-3.5 fill-amber-400" />

@@ -2229,7 +2229,7 @@ const handleDirectCheckout = (storeDomain: string, variantId: string, discountCo
                       {/* Product Details */}
                       <div className="p-3.5 space-y-2.5">
                         <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider flex items-center justify-between">
-                          <span className="text-emerald-400 font-bold">{p.vendor || 'Shopify Store'}</span>
+                          <span className="text-emerald-400 font-bold">{p.store_name || p.brand || p.vendor || 'Shopify Store'}</span>
                           <span className="text-slate-300 font-bold">{p.category}</span>
                         </div>
 
@@ -2479,7 +2479,7 @@ const handleDirectCheckout = (storeDomain: string, variantId: string, discountCo
                     {/* Body Content */}
                     <div className="p-3.5 space-y-2.5">
                       <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider flex items-center justify-between">
-                        <span className="text-emerald-400 font-bold">{p.vendor || 'Shopify Store'}</span>
+                        <span className="text-emerald-400 font-bold">{p.store_name || p.brand || p.vendor || 'Shopify Store'}</span>
                         <span className="text-slate-500">{p.category}</span>
                       </div>
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, X, Sparkles, TrendingUp, ShieldCheck, ArrowUpRight, Zap, Filter } from 'lucide-react';
 import { Product } from '../types';
+import { strictProductSearch } from '../lib/strictSearch';
 
 interface OmniSearchModalProps {
   isOpen: boolean;
@@ -29,16 +30,7 @@ export const OmniSearchModal: React.FC<OmniSearchModalProps> = ({
     'Merino Wool Shoes'
   ];
 
-  const results = products.filter((p) => {
-    if (!query.trim()) return false;
-    const q = query.toLowerCase();
-    return (
-      p.name.toLowerCase().includes(q) ||
-      p.brand.toLowerCase().includes(q) ||
-      p.category.toLowerCase().includes(q) ||
-      p.specs.some((s) => s.value.toLowerCase().includes(q))
-    );
-  });
+  const results = !query.trim() ? [] : strictProductSearch(products, query);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

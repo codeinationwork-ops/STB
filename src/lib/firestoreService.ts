@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   setDoc,
   addDoc,
@@ -696,11 +697,81 @@ export function mapDocToProduct(d: { id: string; data: () => any }): Product {
   };
 }
 
+/**
+ * Cleanly formats corporate vendor strings into human-readable D2C Store/Brand names.
+ * e.g., "IMPULSE INTERNATIONAL PVT. LTD." -> "Andamen"
+ * e.g., "POWERLOOK APPARELS" -> "Powerlook"
+ */
+export function normalizeStoreAndBrandName(
+  brandOrVendor?: string,
+  domainOrUrl?: string,
+  storeName?: string
+): string {
+  const store = (storeName || '').trim();
+  const raw = (brandOrVendor || '').trim();
+  const domain = (domainOrUrl || '').trim().toLowerCase();
+
+  const combinedText = `${store} ${raw} ${domain}`.toLowerCase();
+
+  // 1. Direct regex matching for known D2C brands in our index
+  if (/impulse|andamen/i.test(combinedText)) return 'Andamen';
+  if (/powerlook/i.test(combinedText)) return 'Powerlook';
+  if (/bonkers/i.test(combinedText)) return 'Bonkers Corner';
+  if (/jaywalking/i.test(combinedText)) return 'Jaywalking';
+  if (/huemn/i.test(combinedText)) return 'Huemn';
+  if (/tistabene/i.test(combinedText)) return 'Tistabene';
+  if (/wearesui|sui/i.test(combinedText)) return 'Sui';
+  if (/aroundthecity|around the city/i.test(combinedText)) return 'Around The City';
+
+  // 2. Candidate resolution
+  const genericNames = ['studio', 'default', 'generic', 'shopify direct', 'd2c brand', 'd2c store', 'shopify store'];
+
+  let candidate = store;
+  if (!candidate || genericNames.includes(candidate.toLowerCase())) {
+    candidate = raw;
+  }
+
+  if (!candidate || genericNames.includes(candidate.toLowerCase())) {
+    if (domain) {
+      const cleanDomain = domain
+        .replace(/^https?:\/\//, '')
+        .replace(/^www\./, '')
+        .split('/')[0]
+        .split('.')[0];
+      if (cleanDomain && cleanDomain.length > 2) {
+        candidate = cleanDomain.charAt(0).toUpperCase() + cleanDomain.slice(1);
+      }
+    }
+  }
+
+  if (!candidate || genericNames.includes(candidate.toLowerCase())) {
+    return 'D2C Store';
+  }
+
+  // 3. Strip corporate suffixes (Pvt Ltd, Inc, Apparels, etc.)
+  let cleaned = candidate
+    .replace(/\b(pvt\.?\s*ltd\.?|private\s*limited|inc\.?|llp|corp\.?|corporation|apparels?|clothing|official|store|direct)\b/gi, '')
+    .replace(/[-_]+/g, ' ')
+    .trim();
+
+  if (!cleaned) cleaned = candidate;
+
+  return cleaned
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 export function mapShopifyProductToProduct(sp: any, docId?: string): Product {
   const id = String(sp.id || sp.variant_id || docId || `sp_${Math.random().toString(36).substring(2, 9)}`);
   const name = sp.title || sp.name || 'Shopify Product';
-  const rawBrand = sp.vendor || sp.brand_name || sp.brand || (sp.store_domain ? sp.store_domain.replace(/^https?:\/\//, '').split('.')[0] : 'Shopify Direct');
-  const capitalizedBrand = rawBrand ? rawBrand.charAt(0).toUpperCase() + rawBrand.slice(1) : 'D2C Brand';
+
+  const rawBrand = sp.brand || sp.brand_name || sp.vendor || sp.store_name || '';
+  const domainRaw = String(sp.store_domain || sp.officialUrl || sp.cart_permalink || sp.url || '');
+  const rawStoreName = sp.store_name || '';
+
+  const capitalizedBrand = normalizeStoreAndBrandName(rawBrand, domainRaw, rawStoreName);
   
   const rawCategory = sp.product_type || sp.category || sp.category_name || (Array.isArray(sp.tags) ? sp.tags.join(' ') : sp.tags) || 'Apparel & Fashion';
   const category = String(rawCategory).trim() || 'Apparel & Fashion';
@@ -958,6 +1029,37 @@ export async function logSearchQueryToDb(userId: string, searchQuery: string) {
     });
   } catch (error) {
     console.error('Error logging search to Firestore:', error);
+  }
+}
+
+// 4b. Fetch & Save Try-On Credits per unique user
+export async function fetchUserTryOnCredits(userId: string): Promise<number> {
+  try {
+    const userDocRef = doc(db, USERS_COLLECTION, userId);
+    const snap = await getDoc(userDocRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      if (typeof data.tryOnCredits === 'number') {
+        return data.tryOnCredits;
+      }
+    }
+    // Default: 1 free Try-On per unique user
+    return 1;
+  } catch (error) {
+    console.warn('Error fetching try-on credits from Firestore:', error);
+    return 1;
+  }
+}
+
+export async function saveUserTryOnCredits(userId: string, credits: number): Promise<void> {
+  try {
+    const userDocRef = doc(db, USERS_COLLECTION, userId);
+    await setDoc(userDocRef, {
+      tryOnCredits: credits,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+  } catch (error) {
+    console.error('Error saving try-on credits to Firestore:', error);
   }
 }
 
