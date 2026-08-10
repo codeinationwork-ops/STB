@@ -20,18 +20,21 @@ import { GptTryOnStudio } from './components/GptTryOnStudio';
 import { TryOnPaymentModal } from './components/TryOnPaymentModal';
 
 import {
-  INITIAL_PRODUCTS,
   CATEGORIES,
-  MOCK_ADDRESSES,
+  DEFAULT_ADDRESSES,
   INITIAL_COMMUNITY_SAVINGS,
   SAVINGS_CHART_DATA
-} from './data/mockData';
+} from './constants';
 
 import { Product, UserAddress, UserSession } from './types';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from './lib/firebase';
 import {
   getOrSeedProducts,
+  getProductsFromFirestore,
+  fetchProductBatch,
+  shuffleArray,
+  INITIAL_D2C_PRODUCTS,
   subscribeWishlist,
   toggleWishlistInDb,
   saveOrderToDb,
@@ -179,22 +182,105 @@ export default function App() {
 
   // State Initialization
   const [products, setProducts] = useState<Product[]>([]);
+  const [selectedGender, setSelectedGender] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
-  const [addresses, setAddresses] = useState<UserAddress[]>(MOCK_ADDRESSES);
-  const [defaultAddress, setDefaultAddress] = useState<UserAddress>(MOCK_ADDRESSES[0]);
+  const [addresses, setAddresses] = useState<UserAddress[]>(DEFAULT_ADDRESSES);
+  const [defaultAddress, setDefaultAddress] = useState<UserAddress>(DEFAULT_ADDRESSES[0]);
 
-  // Load / Seed Firestore Products
-  useEffect(() => {
-    getOrSeedProducts([]).then((loadedProducts) => {
-      setProducts(loadedProducts);
-      if (loadedProducts.length > 0) {
-        setActiveExpressProduct(loadedProducts[0]);
+  // Cursor Pagination & Infinite Shuffled Loading State
+  const [lastCursor, setLastCursor] = useState<any>(null);
+  const [hasMoreProducts, setHasMoreProducts] = useState<boolean>(true);
+
+  // Load next 100-product chunk from Firestore shopify_products, shuffle, and append
+  const loadMoreProducts = async () => {
+    if (isLoading || !hasMoreProducts) return;
+    setIsLoading(true);
+
+    try {
+      const { products: newProducts, nextCursor } = await fetchProductBatch(lastCursor, 100, selectedGender);
+
+      if (newProducts.length === 0) {
+        setHasMoreProducts(false);
+        return;
       }
-      // Preload images for instant switching & lightning fast action execution!
-      const urlsToPreload = loadedProducts.flatMap((p) => p.images || []).filter(Boolean);
-      preloadImageUrls(urlsToPreload);
-    });
+
+      const shuffledBatch = shuffleArray(newProducts);
+
+      setProducts((prev) => {
+        const existingIds = new Set(prev.map((p) => p.id));
+        const uniqueNew = shuffledBatch.filter((p) => !existingIds.has(p.id));
+        return [...prev, ...uniqueNew];
+      });
+
+      setLastCursor(nextCursor);
+    } catch (error) {
+      console.error("Error loading next product chunk from shopify_products:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Gender selection handler with live cursor-paginated Firestore shopify_products fetching
+  const handleSelectGender = async (gender: string) => {
+    setSelectedGender(gender);
+    setIsLoading(true);
+    setLastCursor(null);
+    setHasMoreProducts(true);
+
+    try {
+      const { products: batchData, nextCursor } = await fetchProductBatch(null, 100, gender);
+      if (batchData && batchData.length > 0) {
+        const shuffled = shuffleArray(batchData);
+        setProducts(shuffled);
+        setLastCursor(nextCursor);
+        setActiveExpressProduct(shuffled[0]);
+      } else {
+        const data = await getProductsFromFirestore(gender);
+        if (data && data.length > 0) {
+          const shuffled = shuffleArray(data);
+          setProducts(shuffled);
+          setActiveExpressProduct(shuffled[0]);
+        }
+      }
+    } catch (error) {
+      console.error("Firestore fetch error for shopify_products:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Load initial 100-product chunk live from Firestore shopify_products
+  useEffect(() => {
+    setIsLoading(true);
+    fetchProductBatch(null, 100, selectedGender)
+      .then(({ products: initialBatch, nextCursor }) => {
+        if (initialBatch && initialBatch.length > 0) {
+          const shuffled = shuffleArray(initialBatch);
+          setProducts(shuffled);
+          setLastCursor(nextCursor);
+          setActiveExpressProduct(shuffled[0]);
+          const urlsToPreload = shuffled.flatMap((p) => p.images || []).filter(Boolean);
+          preloadImageUrls(urlsToPreload);
+        } else {
+          // Fallback to fetchAllProductsFromFirestore if initial batch returns empty
+          getOrSeedProducts([])
+            .then((loadedProducts) => {
+              if (loadedProducts && loadedProducts.length > 0) {
+                const shuffled = shuffleArray(loadedProducts);
+                setProducts(shuffled);
+                setActiveExpressProduct(shuffled[0]);
+              }
+            });
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load initial shopify_products batch:", err);
+      })
+      .finally(() => {
+        setIsLoading(false);
+      });
   }, []);
 
   // Subscribe to wishlist changes & Try-On credits for the specific user
@@ -410,6 +496,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 selection:bg-red-600 selection:text-white font-sans antialiased relative overflow-x-hidden">
+      {isLoading && (
+        <div className="fixed top-0 left-0 right-0 z-50 h-1 bg-gradient-to-r from-purple-600 via-pink-500 to-amber-400 animate-pulse" />
+      )}
       
       {/* Dynamic Background Mesh Gradients */}
       <div className="fixed inset-0 pointer-events-none z-0">
@@ -434,6 +523,7 @@ export default function App() {
         onOpenWishlist={() => setIsWishlistOpen(true)}
         onOpenAddressVault={() => setIsAddressVaultOpen(true)}
         onOpenGptTryOn={handleTryOnAttempt}
+        onSelectGender={handleSelectGender}
       />
 
       {/* Slide-Over Drawers & Modals */}

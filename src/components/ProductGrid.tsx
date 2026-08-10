@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { SlidersHorizontal, ArrowUpDown, Filter, Sparkles, Grid, LayoutGrid, Check, RefreshCw, Bot, ShieldCheck } from 'lucide-react';
 import { Product } from '../types';
 import { ProductCard } from './ProductCard';
-import { safeNumber } from '../lib/firestoreService';
+import { safeNumber, isMaleProduct, isFemaleProduct } from '../lib/firestoreService';
 import { matchesCategoryFilter, MALE_CATEGORIES, FEMALE_CATEGORIES } from './GeminiSearchLanding';
 import { verifyProductsWithGeminiAI, getAICachedVerification } from '../lib/geminiCategoryVerifier';
 import { strictKeywordMatch } from '../lib/strictSearch';
@@ -64,30 +64,6 @@ export const ProductGrid: React.FC<ProductGridProps> = ({
       setMaxPriceInput(maxCatalogPrice);
     }
   }, [minCatalogPrice, maxCatalogPrice, isPriceFilterApplied]);
-
-  const isMaleProduct = (p: Product) => {
-    if (p.gender === 'Men') return true;
-    if (p.gender === 'Women') return false;
-    const text = `${p.name} ${p.category} ${p.description || ''} ${(p.specs || []).map(s => `${s.label} ${s.value}`).join(' ')}`.toLowerCase();
-    
-    // Female specific garments & apparel items block
-    const isFemaleSpecific = /\b(women|womens|women's|female|ladies|lady|girl|girls|dress|dresses|skirt|skirts|saree|sari|lehenga|bra|bras|crop top|kurti|kurtis|gown|gowns|bikini|monokini|frock|blouse|heels|handbag|lingerie)\b/i.test(text);
-    if (isFemaleSpecific) return false;
-
-    return true;
-  };
-
-  const isFemaleProduct = (p: Product) => {
-    if (p.gender === 'Women') return true;
-    if (p.gender === 'Men') return false;
-    const text = `${p.name} ${p.category} ${p.description || ''} ${(p.specs || []).map(s => `${s.label} ${s.value}`).join(' ')}`.toLowerCase();
-
-    // Male specific garments & apparel items block
-    const isMaleSpecific = /\b(men's|menswear|gents|boys|boy|sherwani|boxer|boxers|trunks|briefs)\b/i.test(text);
-    if (isMaleSpecific) return false;
-
-    return true;
-  };
 
   // Dynamic Categories derived directly from Shopify products for selected gender
   const categories = useMemo(() => {

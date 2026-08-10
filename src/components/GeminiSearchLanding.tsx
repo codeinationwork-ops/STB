@@ -33,7 +33,7 @@ import {
   X
 } from 'lucide-react';
 import { Product, UserAddress, UserSession } from '../types';
-import { logSearchQueryToDb, getLiveProductsFromDb, safeNumber, normalizeStoreAndBrandName } from '../lib/firestoreService';
+import { logSearchQueryToDb, getLiveProductsFromDb, safeNumber, normalizeStoreAndBrandName, INITIAL_D2C_PRODUCTS, isMaleProduct, isFemaleProduct } from '../lib/firestoreService';
 import { verifyProductsWithGeminiAI, getAICachedVerification } from '../lib/geminiCategoryVerifier';
 import { normalizeQuery, normalizeText } from '../lib/strictSearch';
 import { BrandLogo } from './BrandLogo';
@@ -58,6 +58,7 @@ interface GeminiSearchLandingProps {
   onOpenCrawler?: () => void;
   onOpenGptTryOn?: (product?: Product | null, imageUrl?: string | null) => void;
   onSwitchToDashboard?: () => void;
+  onSelectGender?: (gender: string) => void;
   tryOnCredits?: number;
 }
 
@@ -197,6 +198,7 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
   onOpenCrawler,
   onOpenGptTryOn,
   onSwitchToDashboard,
+  onSelectGender,
   tryOnCredits = 1
 }) => {
   const [query, setQuery] = useState('');
@@ -224,14 +226,19 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
   const [noBudgetMatchError, setNoBudgetMatchError] = useState<string | null>(null);
   const [isShopifyConnectOpen, setIsShopifyConnectOpen] = useState<boolean>(false);
 
-  const applyActiveFilters = (
+  const applyActiveFilters = async (
     genderMode: 'Men' | 'Women' | null,
     minP: number | null,
     maxP: number | null
   ) => {
     if (!genderMode) return;
 
-    let filtered = products.filter((p) => {
+    let pool = products || [];
+    if (pool.length === 0) {
+      pool = await getLiveProductsFromDb([]);
+    }
+
+    let filtered = pool.filter((p) => {
       // 1. Gender check
       const matchesGender = genderMode === 'Men' ? isMaleProduct(p) : isFemaleProduct(p);
       if (!matchesGender) return false;
@@ -258,14 +265,25 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
       setSelectedRandomProduct(nextItem);
       setActiveImageIndex(0);
     } else {
-      setMatchedProducts([]);
-      setSelectedRandomProduct(null);
+      // Fallback to any product matching gender so view always transitions safely
+      const genderFallback = pool.filter((p) => genderMode === 'Men' ? isMaleProduct(p) : isFemaleProduct(p));
+      const fallbackList = genderFallback;
+      if (fallbackList.length > 0) {
+        setNoBudgetMatchError(null);
+        setMatchedProducts(fallbackList);
+        const item = fallbackList[Math.floor(Math.random() * fallbackList.length)];
+        setSelectedRandomProduct(item);
+        setActiveImageIndex(0);
+      } else {
+        setMatchedProducts([]);
+        setSelectedRandomProduct(null);
 
-      const errText = minP !== null && maxP !== null
-        ? `No ${genderMode.toLowerCase()}'s products found matching budget ₹${minP.toLocaleString('en-IN')} - ₹${maxP.toLocaleString('en-IN')}`
-        : `No ${genderMode.toLowerCase()}'s products found`;
+        const errText = minP !== null && maxP !== null
+          ? `No ${genderMode.toLowerCase()}'s products found matching budget ₹${minP.toLocaleString('en-IN')} - ₹${maxP.toLocaleString('en-IN')}`
+          : `No ${genderMode.toLowerCase()}'s products found`;
 
-      setNoBudgetMatchError(errText);
+        setNoBudgetMatchError(errText);
+      }
     }
   };
 
@@ -380,30 +398,6 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
   };
   const [showOptionsFilter, setShowOptionsFilter] = useState(false);
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string | null>(null);
-
-  const isMaleProduct = (p: Product) => {
-    if (p.gender === 'Men') return true;
-    if (p.gender === 'Women') return false;
-    const text = `${p.name} ${p.category} ${p.description || ''} ${(p.specs || []).map(s => `${s.label} ${s.value}`).join(' ')}`.toLowerCase();
-    
-    // Female specific garments & apparel items block
-    const isFemaleSpecific = /\b(women|womens|women's|female|ladies|lady|girl|girls|dress|dresses|skirt|skirts|saree|sari|lehenga|bra|bras|crop top|kurti|kurtis|gown|gowns|bikini|monokini|frock|blouse|heels|handbag|lingerie)\b/i.test(text);
-    if (isFemaleSpecific) return false;
-
-    return true;
-  };
-
-  const isFemaleProduct = (p: Product) => {
-    if (p.gender === 'Women') return true;
-    if (p.gender === 'Men') return false;
-    const text = `${p.name} ${p.category} ${p.description || ''} ${(p.specs || []).map(s => `${s.label} ${s.value}`).join(' ')}`.toLowerCase();
-
-    // Male specific garments & apparel items block
-    const isMaleSpecific = /\b(men's|menswear|gents|boys|boy|sherwani|boxer|boxers|trunks|briefs)\b/i.test(text);
-    if (isMaleSpecific) return false;
-
-    return true;
-  };
 
   const filteredMatchedProducts = useMemo(() => {
     if (searchGenderFilter === 'All') return matchedProducts;
@@ -708,14 +702,18 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
     const pool = products.length > 0 ? products : await getLiveProductsFromDb(products);
     const instantMatches = filterProductsBySearchIntent(pool, trimmed, selectedGenderMode);
 
-    setMatchedProducts(instantMatches);
+    setMatchedProducts(instantMatches.length > 0 ? instantMatches : pool);
     if (instantMatches.length > 0) {
       setSelectedRandomProduct(instantMatches[0]);
       if (!selectedGenderMode) {
         setSelectedGenderMode(isMaleProduct(instantMatches[0]) ? 'Men' : 'Women');
       }
-    } else {
-      setSelectedRandomProduct(null);
+    } else if (pool.length > 0) {
+      const fallbackItem = pool[Math.floor(Math.random() * pool.length)];
+      setSelectedRandomProduct(fallbackItem);
+      if (!selectedGenderMode) {
+        setSelectedGenderMode(isMaleProduct(fallbackItem) ? 'Men' : 'Women');
+      }
     }
     setIsSearching(false);
 
@@ -841,16 +839,20 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
   };
 
   // Select non-repeating product by gender for the screen view
-  const handleSelectGender = (gender: 'Men' | 'Women') => {
+  const handleSelectGender = async (gender: 'Men' | 'Women') => {
     setSelectedGenderMode(gender);
     setSearchGenderFilter(gender);
     setActiveImageIndex(0);
+
+    if (onSelectGender) {
+      onSelectGender(gender);
+    }
 
     if (typeof window !== 'undefined' && !window.location.pathname.toLowerCase().startsWith('/products')) {
       window.history.pushState({}, '', '/products');
     }
 
-    applyActiveFilters(
+    await applyActiveFilters(
       gender,
       isBudgetApplied ? appliedMinBudget : null,
       isBudgetApplied ? appliedMaxBudget : null
@@ -907,7 +909,7 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
     // Keep the current product showcase active or pick from catalog if none selected
     if (!selectedRandomProduct && products.length > 0) {
       const genderPool = products.filter((p) => (targetGender === 'Men' ? isMaleProduct(p) : isFemaleProduct(p)));
-      setSelectedRandomProduct(genderPool.length > 0 ? genderPool[0] : products[0]);
+      setSelectedRandomProduct(genderPool.length > 0 ? genderPool[0] : null);
     }
 
     // Keep state on /products path so user stays on the showcase feed
@@ -1405,7 +1407,7 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
                           const target = e.currentTarget;
                           if (!target.dataset.triedFallback) {
                             target.dataset.triedFallback = 'true';
-                            target.src = '/male_ss.png';
+                            target.src = 'https://images.unsplash.com/photo-1617137968427-85924c800a22?w=600&auto=format&fit=crop&q=80';
                           }
                         }}
                         alt="Men's Fashion"
@@ -1468,7 +1470,7 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
                           const target = e.currentTarget;
                           if (!target.dataset.triedFallback) {
                             target.dataset.triedFallback = 'true';
-                            target.src = '/female_ss.png';
+                            target.src = 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600&auto=format&fit=crop&q=80';
                           }
                         }}
                         alt="Women's Fashion"

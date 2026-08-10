@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Zap, TrendingDown, ArrowUpRight, BarChart3, ShieldCheck, Sparkles } from 'lucide-react';
-import { SAVINGS_CHART_DATA } from '../data/mockData';
+import { SAVINGS_CHART_DATA } from '../constants';
 
 interface SavingsAnalyticsModalProps {
   isOpen: boolean;
