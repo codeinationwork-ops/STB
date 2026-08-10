@@ -9,6 +9,7 @@ import {
   writeBatch,
   query,
   where,
+  orderBy,
   limit,
   startAfter,
   onSnapshot,
@@ -37,6 +38,8 @@ const WISHLIST_COLLECTION = 'wishlists';
 const ORDERS_COLLECTION = 'orders';
 const SEARCHES_COLLECTION = 'searches';
 const USERS_COLLECTION = 'users';
+const SHOPIFY_STORES_COLLECTION = 'shopify_stores';
+const SHOPIFY_PRODUCTS_COLLECTION = 'shopify_products';
 
 export interface BrandSummary {
   id: string;
@@ -142,9 +145,6 @@ async function executeBatchedOperations(
     if (onProgress) {
       onProgress(completed, operations.length);
     }
-
-    // Small delay between batches to allow client SDK write streams to flush cleanly
-    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
 
@@ -800,14 +800,20 @@ export function mapShopifyProductToProduct(sp: any, docId?: string): Product {
   const domainClean = sp.store_domain ? sp.store_domain.replace(/^https?:\/\//, '').split('/')[0] : '';
   const officialUrl = sp.officialUrl || sp.cart_permalink || (domainClean ? `https://${domainClean}` : '');
 
-  const rawGender = sp.gender || sp.target_gender || sp.audience;
+  const rawGenderStr = String(sp.gender || sp.target_gender || sp.audience || '').trim().toLowerCase();
   let gender: 'Men' | 'Women' | 'Unisex' = 'Unisex';
-  if (rawGender === 'Men' || rawGender === 'Women' || rawGender === 'Unisex') {
-    gender = rawGender;
+  if (/^(women|womens|women's|female|ladies|lady|girl|girls|for her)$/i.test(rawGenderStr)) {
+    gender = 'Women';
+  } else if (/^(men|mens|men's|male|gents|guy|guys|boy|boys|for him)$/i.test(rawGenderStr)) {
+    gender = 'Men';
+  } else if (/^(unisex|all|everyone)$/i.test(rawGenderStr)) {
+    gender = 'Unisex';
   } else {
-    const text = `${name} ${category} ${sp.description || ''}`.toLowerCase();
-    const hasWomen = /\b(women|womens|women's|female|ladies|lady|girl|girls|dress|dresses|skirt|crop|bra|bras|leggings|gown|saree|sari|lehenga|kurti|bikini|monokini|camisole|frock|corset|blouse|midi|maxi|bodycon)\b/i.test(text);
-    const hasMen = /\b(men|mens|men's|male|guys|boy|boys|boxer|boxers|trunks|sherwani|vest|chinos|briefs|suit|tuxedo)\b/i.test(text);
+    const tagsStr = Array.isArray(sp.tags) ? sp.tags.join(' ') : String(sp.tags || '');
+    const specsStr = Array.isArray(sp.specs) ? sp.specs.map((s: any) => `${s?.label || ''} ${s?.value || ''}`).join(' ') : '';
+    const text = `${name} ${category} ${sp.product_type || ''} ${sp.description || ''} ${tagsStr} ${specsStr}`.toLowerCase();
+    const hasWomen = FEMALE_KEYWORDS_REGEX.test(text);
+    const hasMen = MALE_KEYWORDS_REGEX.test(text);
     if (hasWomen && !hasMen) gender = 'Women';
     else if (hasMen && !hasWomen) gender = 'Men';
     else gender = 'Unisex';
@@ -929,6 +935,109 @@ export const shuffleArray = <T>(array: T[]): T[] => {
   return newArr;
 };
 
+// Multi-Brand Round-Robin Interleaving to guarantee brand diversity in feeds
+export const interleaveByBrand = (array: Product[]): Product[] => {
+  if (!array || array.length === 0) return [];
+
+  const getBrand = (p: Product) =>
+    normalizeStoreAndBrandName(p.brand, p.officialUrl || p.store_domain, (p as any).vendor || (p as any).store_name) || 'Brand';
+
+  // Group products by normalized brand name
+  const brandBuckets = new Map<string, Product[]>();
+  array.forEach((p) => {
+    const b = getBrand(p);
+    if (!brandBuckets.has(b)) brandBuckets.set(b, []);
+    brandBuckets.get(b)!.push(p);
+  });
+
+  // Shuffle products within each brand bucket
+  brandBuckets.forEach((prods, key) => {
+    brandBuckets.set(key, shuffleArray(prods));
+  });
+
+  // Shuffle brand keys so starting brand varies dynamically
+  const brandKeys = shuffleArray(Array.from(brandBuckets.keys()));
+
+  const result: Product[] = [];
+  const maxLen = Math.max(0, ...Array.from(brandBuckets.values()).map((b) => b.length));
+
+  // Round-robin interleave across distinct brands
+  for (let i = 0; i < maxLen; i++) {
+    for (const bKey of brandKeys) {
+      const bucket = brandBuckets.get(bKey);
+      if (bucket && i < bucket.length) {
+        result.push(bucket[i]);
+      }
+    }
+  }
+
+  return result;
+};
+
+// Brand-Diverse Picker to guarantee each skip/shuffle transitions to a product from a NEW brand
+export function pickNextBrandDiverseProduct(
+  pool: Product[],
+  currentProduct: Product | null,
+  seenProductIds: Set<string>,
+  recentBrandHistory: string[]
+): Product | null {
+  if (!pool || pool.length === 0) return null;
+
+  const getBrand = (p: Product) =>
+    normalizeStoreAndBrandName(p.brand, p.officialUrl || p.store_domain, (p as any).vendor || (p as any).store_name) || 'Brand';
+
+  // Find unseen products in pool
+  let unseen = pool.filter((p) => !seenProductIds.has(p.id));
+  if (unseen.length === 0) {
+    // Reset seen product IDs if all products have been seen
+    pool.forEach((p) => seenProductIds.delete(p.id));
+    unseen = pool;
+  }
+
+  const currentBrand = currentProduct ? getBrand(currentProduct) : null;
+
+  // Group unseen products by normalized brand
+  const brandBuckets = new Map<string, Product[]>();
+  unseen.forEach((p) => {
+    const b = getBrand(p);
+    if (!brandBuckets.has(b)) brandBuckets.set(b, []);
+    brandBuckets.get(b)!.push(p);
+  });
+
+  const availableBrands = Array.from(brandBuckets.keys());
+
+  // 1. Strictly exclude current product's brand if other brands exist
+  let candidateBrands = availableBrands.filter((b) => b !== currentBrand);
+  if (candidateBrands.length === 0) {
+    candidateBrands = availableBrands;
+  }
+
+  // 2. Exclude recently shown brands from recent history if possible
+  const notRecentlySeenBrands = candidateBrands.filter((b) => !recentBrandHistory.includes(b));
+  let selectedBrands = notRecentlySeenBrands.length > 0 ? notRecentlySeenBrands : candidateBrands;
+
+  // 3. Pick a brand randomly among candidate brands
+  const chosenBrand = selectedBrands[Math.floor(Math.random() * selectedBrands.length)];
+  const brandProducts = brandBuckets.get(chosenBrand) || [];
+
+  // 4. Pick a product from chosen brand (excluding current product if possible)
+  const candidateProducts = brandProducts.filter((p) => p.id !== currentProduct?.id);
+  const finalPool = candidateProducts.length > 0 ? candidateProducts : brandProducts;
+  const chosenProduct = finalPool[Math.floor(Math.random() * finalPool.length)] || null;
+
+  if (chosenProduct) {
+    seenProductIds.add(chosenProduct.id);
+    const brandName = getBrand(chosenProduct);
+    recentBrandHistory.push(brandName);
+    // Keep history bounded to last 15 brands
+    if (recentBrandHistory.length > 15) {
+      recentBrandHistory.shift();
+    }
+  }
+
+  return chosenProduct;
+}
+
 // Comprehensive gender classification helpers
 export const FEMALE_KEYWORDS_REGEX = /\b(women|womens|women's|woman|female|ladies|lady|girl|girls|for her|her|dress|dresses|skirt|skirts|saree|saris|sari|lehenga|lehengas|bra|bras|bralette|crop|croptop|crop top|kurti|kurtis|gown|gowns|bikini|monokini|frock|frocks|blouse|blouses|heels|stiletto|stilettos|wedge|wedges|handbag|handbags|clutch|clutches|tote|totes|lingerie|makeup|lipstick|lipsticks|lipgloss|eyeliner|mascara|blush|necklace|necklaces|earring|earrings|pendant|pendants|anklet|anklets|scrunchie|scrunchies|hairband|hairbands|dupatta|dupattas|palazzo|palazzos|salwar|salwars|choli|cholis|maternity|corset|corsets|camisole|nighty|nightgown|scrunchy|bodycon|midi|maxi|sanitary|feminine|purse|purses|shoulder bag|pump|pumps|mule|mules|sandals|kajal|nail polish|nail paint|lip balm|concealer|foundation|serum|facial|compact|highlighter|tampon|pads|anarkali|sharara|gharara|kaftan|kaftans|jumpsuit|romper|slip dress|wrap dress|nightwear for women|ladies footwear)\b/i;
 
@@ -937,21 +1046,29 @@ export const MALE_KEYWORDS_REGEX = /\b(men|mens|men's|man|male|gents|gentleman|g
 export function isFemaleProduct(p: Product): boolean {
   if (!p) return false;
 
-  const text = `${p.name || ''} ${p.category || ''} ${p.description || ''} ${(p.specs || []).map(s => `${s.label || ''} ${s.value || ''}`).join(' ')}`.toLowerCase();
+  const g = (p.gender || '').toLowerCase().trim();
+  // N/A, Not Assigned, Unisex, or empty gender must NEVER appear in Female section unless explicitly Female
+  if (g === 'n/a' || g === 'na' || g === 'not assigned' || g === 'none' || g === 'unassigned' || g === 'unisex') {
+    return false;
+  }
+
+  // 1. Explicit Female gender tag
+  if (g === 'women' || g === 'female' || g === 'ladies' || g === "women's" || g === 'womens') {
+    return true;
+  }
+
+  // 2. Explicit Male gender tag -> definitely NOT Female
+  if (g === 'men' || g === 'male' || g === 'gents' || g === "men's" || g === 'mens') {
+    return false;
+  }
+
+  // 3. Fallback to strict keyword matching if gender tag is missing
+  const text = `${p.name || ''} ${p.category || ''} ${p.description || ''} ${(p.specs || []).map(s => `${s?.label || ''} ${s?.value || ''}`).join(' ')}`.toLowerCase();
 
   const matchesFemale = FEMALE_KEYWORDS_REGEX.test(text);
   const matchesMale = MALE_KEYWORDS_REGEX.test(text);
 
-  // 1. ABSOLUTE STRICT OVERRIDE: If the text contains female apparel/beauty keywords -> ALWAYS female!
-  if (matchesFemale) return true;
-
-  // 2. ABSOLUTE STRICT OVERRIDE: If text contains male keywords and no female keywords -> NOT female!
-  if (matchesMale && !matchesFemale) return false;
-
-  // 3. Fallback to gender property
-  const g = (p.gender || '').toLowerCase().trim();
-  if (g === 'women' || g === 'female' || g === 'ladies' || g === "women's" || g === 'womens') return true;
-  if (g === 'men' || g === 'male' || g === 'gents' || g === "men's" || g === 'mens') return false;
+  if (matchesFemale && !matchesMale) return true;
 
   return false;
 }
@@ -959,23 +1076,32 @@ export function isFemaleProduct(p: Product): boolean {
 export function isMaleProduct(p: Product): boolean {
   if (!p) return false;
 
-  const text = `${p.name || ''} ${p.category || ''} ${p.description || ''} ${(p.specs || []).map(s => `${s.label || ''} ${s.value || ''}`).join(' ')}`.toLowerCase();
+  const g = (p.gender || '').toLowerCase().trim();
+  // N/A, Not Assigned, Unisex, or empty gender must NEVER appear in Male section unless explicitly Male
+  if (g === 'n/a' || g === 'na' || g === 'not assigned' || g === 'none' || g === 'unassigned' || g === 'unisex') {
+    return false;
+  }
+
+  // 1. Explicit Male gender tag
+  if (g === 'men' || g === 'male' || g === 'gents' || g === "men's" || g === 'mens') {
+    return true;
+  }
+
+  // 2. Explicit Female gender tag -> definitely NOT Male
+  if (g === 'women' || g === 'female' || g === 'ladies' || g === "women's" || g === 'womens') {
+    return false;
+  }
+
+  // 3. Fallback to strict keyword matching if gender tag is missing
+  const text = `${p.name || ''} ${p.category || ''} ${p.description || ''} ${(p.specs || []).map(s => `${s?.label || ''} ${s?.value || ''}`).join(' ')}`.toLowerCase();
 
   const matchesFemale = FEMALE_KEYWORDS_REGEX.test(text);
   const matchesMale = MALE_KEYWORDS_REGEX.test(text);
 
-  // 1. ABSOLUTE STRICT OVERRIDE: If product text contains ANY female keyword (dress, saree, kurti, heels, handbag, makeup, lipstick, earrings, skirts, etc.), IT CAN NEVER BE A MALE PRODUCT!
   if (matchesFemale) return false;
-
-  // 2. If text contains male apparel keywords -> ALWAYS male!
   if (matchesMale) return true;
 
-  // 3. Fallback to gender property
-  const g = (p.gender || '').toLowerCase().trim();
-  if (g === 'women' || g === 'female' || g === 'ladies' || g === "women's" || g === 'womens') return false;
-  if (g === 'men' || g === 'male' || g === 'gents' || g === "men's" || g === 'mens') return true;
-
-  return true;
+  return false;
 }
 
 // Helper to check if a product matches the requested gender filter
@@ -994,53 +1120,203 @@ export function matchesGenderFilter(p: Product, genderFilter?: string | null): b
   return true;
 }
 
-// Fetch products in paginated chunks (with cursor) from shopify_products strictly following gender filter if provided
+// Lightweight stream-based pagination wrapper interface for shopify_products query
+export interface StreamPaginationOptions {
+  batchSize?: number; // defaults to 50 to prevent memory spikes and keep UI snappy
+  genderFilter?: string | null;
+  maxItems?: number;
+  onChunk?: (chunk: Product[], accumulated: Product[], isDone: boolean) => void;
+}
+
+// Stream-based lightweight pagination wrapper for shopify_products using limit(50)
+export async function streamShopifyProducts(
+  options: StreamPaginationOptions = {}
+): Promise<Product[]> {
+  const batchSize = options.batchSize || 50; // Stream in 50-item lightweight chunks
+  const maxItems = options.maxItems || 50000;
+  const genderFilter = options.genderFilter || null;
+  const onChunk = options.onChunk;
+
+  const itemsMap = new Map<string, Product>();
+  let lastDoc: QueryDocumentSnapshot<DocumentData> | null = null;
+  let hasMore = true;
+
+  const gLower = genderFilter ? genderFilter.toLowerCase().trim() : 'all';
+  let genderConstraint: any;
+  if (gLower !== 'all' && gLower !== '') {
+    let selectedGender = gLower;
+    if (gLower === 'men' || gLower === 'male' || gLower === 'him' || gLower === 'for him') {
+      selectedGender = 'Men';
+    } else if (gLower === 'women' || gLower === 'female' || gLower === 'her' || gLower === 'for her') {
+      selectedGender = 'Women';
+    } else if (gLower === 'unisex') {
+      selectedGender = 'Unisex';
+    }
+    genderConstraint = where('gender', '==', selectedGender);
+  } else {
+    // Explicitly exclude products with 'N/A' gender values
+    genderConstraint = where('gender', 'in', ['male', 'female', 'unisex', 'Men', 'Women', 'Unisex']);
+  }
+
+  try {
+    while (hasMore && itemsMap.size < maxItems) {
+      const fetchCount = Math.min(batchSize, maxItems - itemsMap.size);
+      const chunkProducts: Product[] = [];
+
+      try {
+        const queryConstraints: any[] = [genderConstraint, orderBy('random_sort')];
+        if (lastDoc) {
+          queryConstraints.push(startAfter(lastDoc));
+        }
+        queryConstraints.push(limit(fetchCount));
+
+        const q = query(collection(db, SHOPIFY_PRODUCTS_COLLECTION), ...queryConstraints);
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+          hasMore = false;
+          break;
+        }
+
+        snapshot.docs.forEach((d) => {
+          const spData = d.data();
+          if (spData && (spData.title || spData.name || spData.price)) {
+            const mapped = mapShopifyProductToProduct(spData, d.id);
+            if (matchesGenderFilter(mapped, genderFilter)) {
+              itemsMap.set(mapped.id, mapped);
+              chunkProducts.push(mapped);
+            }
+          }
+        });
+
+        lastDoc = snapshot.docs[snapshot.docs.length - 1];
+        if (snapshot.docs.length < fetchCount) {
+          hasMore = false;
+        }
+      } catch (indexedErr) {
+        console.warn('Notice: Composite index query (gender + random_sort) pending/unavailable, using lightweight 50-item fallback stream:', indexedErr);
+        let fallbackConstraints: any[] = [];
+        if (lastDoc) {
+          fallbackConstraints.push(startAfter(lastDoc));
+        }
+        fallbackConstraints.push(limit(fetchCount));
+
+        const q = query(collection(db, SHOPIFY_PRODUCTS_COLLECTION), ...fallbackConstraints);
+        const snapshot = await getDocs(q);
+
+        if (snapshot.empty) {
+          hasMore = false;
+          break;
+        }
+
+        snapshot.docs.forEach((d) => {
+          const spData = d.data();
+          if (spData && (spData.title || spData.name || spData.price)) {
+            const mapped = mapShopifyProductToProduct(spData, d.id);
+            if (matchesGenderFilter(mapped, genderFilter)) {
+              itemsMap.set(mapped.id, mapped);
+              chunkProducts.push(mapped);
+            }
+          }
+        });
+
+        lastDoc = snapshot.docs[snapshot.docs.length - 1];
+        if (snapshot.docs.length < fetchCount) {
+          hasMore = false;
+        }
+      }
+
+      const accumulated = Array.from(itemsMap.values());
+      if (onChunk && chunkProducts.length > 0) {
+        onChunk(chunkProducts, accumulated, !hasMore);
+      }
+    }
+  } catch (err) {
+    console.warn('Notice reading shopify_products in lightweight stream wrapper:', err);
+  }
+
+  const finalResult = Array.from(itemsMap.values());
+  if (onChunk && finalResult.length > 0) {
+    onChunk([], finalResult, true);
+  }
+  return finalResult;
+}
+
+// Fetch products in paginated 50-item lightweight chunks (with cursor) from shopify_products
 export async function fetchProductBatch(
   lastVisibleDoc: QueryDocumentSnapshot<DocumentData> | null = null,
-  batchSize: number = 100,
+  batchSize: number = 50,
   genderFilter?: string | null
 ): Promise<{ products: Product[]; nextCursor: QueryDocumentSnapshot<DocumentData> | null }> {
   try {
     const productsRef = collection(db, SHOPIFY_PRODUCTS_COLLECTION);
     const matchingProducts: Product[] = [];
-    let currentCursor: QueryDocumentSnapshot<DocumentData> | null = lastVisibleDoc;
     let nextCursor: QueryDocumentSnapshot<DocumentData> | null = null;
-    let keepFetching = true;
-    let totalDocsExamined = 0;
-    const MAX_DOCS_TO_EXAMINE = 50000;
 
-    while (keepFetching && matchingProducts.length < batchSize && totalDocsExamined < MAX_DOCS_TO_EXAMINE) {
-      const fetchChunkSize = 100;
-      let q = currentCursor
-        ? query(productsRef, startAfter(currentCursor), limit(fetchChunkSize))
-        : query(productsRef, limit(fetchChunkSize));
+    const gLower = genderFilter ? genderFilter.toLowerCase().trim() : 'all';
 
+    // Construct composite query using selectedGender and orderBy('random_sort'), excluding N/A
+    const queryConstraints: any[] = [];
+    if (gLower !== 'all' && gLower !== '') {
+      let selectedGender = gLower;
+      if (gLower === 'men' || gLower === 'male' || gLower === 'him' || gLower === 'for him') {
+        selectedGender = 'Men';
+      } else if (gLower === 'women' || gLower === 'female' || gLower === 'her' || gLower === 'for her') {
+        selectedGender = 'Women';
+      } else if (gLower === 'unisex') {
+        selectedGender = 'Unisex';
+      }
+      queryConstraints.push(where('gender', '==', selectedGender));
+    } else {
+      // Explicitly exclude products with 'N/A' gender values using 'in' clause
+      queryConstraints.push(where('gender', 'in', ['male', 'female', 'unisex', 'Men', 'Women', 'Unisex']));
+    }
+
+    queryConstraints.push(orderBy('random_sort'));
+
+    if (lastVisibleDoc) {
+      queryConstraints.push(startAfter(lastVisibleDoc));
+    }
+    queryConstraints.push(limit(batchSize));
+
+    try {
+      const q = query(productsRef, ...queryConstraints);
       const snapshot = await getDocs(q);
 
-      if (snapshot.empty) {
-        keepFetching = false;
-        break;
+      if (!snapshot.empty) {
+        nextCursor = snapshot.docs[snapshot.docs.length - 1];
+        snapshot.docs.forEach((docSnap) => {
+          const spData = docSnap.data();
+          if (spData && (spData.title || spData.name || spData.price)) {
+            const mapped = mapShopifyProductToProduct(spData, docSnap.id);
+            matchingProducts.push(mapped);
+          }
+        });
+        return { products: matchingProducts, nextCursor };
       }
+    } catch (indexedErr) {
+      console.warn('Composite index query on shopify_products (gender + random_sort) unavailable or pending, executing resilient query fallback:', indexedErr);
+      let fallbackConstraints: any[] = [];
+      if (lastVisibleDoc) {
+        fallbackConstraints.push(startAfter(lastVisibleDoc));
+      }
+      fallbackConstraints.push(limit(batchSize));
+      const q = query(productsRef, ...fallbackConstraints);
+      const snapshot = await getDocs(q);
 
-      totalDocsExamined += snapshot.docs.length;
-      currentCursor = snapshot.docs[snapshot.docs.length - 1];
-      nextCursor = currentCursor;
-
-      snapshot.docs.forEach((docSnap) => {
-        const spData = docSnap.data();
-        if (spData && (spData.title || spData.name || spData.price)) {
-          const mapped = mapShopifyProductToProduct(spData, docSnap.id);
-          if (matchesGenderFilter(mapped, genderFilter)) {
-            if (matchingProducts.length < batchSize) {
+      if (!snapshot.empty) {
+        nextCursor = snapshot.docs[snapshot.docs.length - 1];
+        snapshot.docs.forEach((docSnap) => {
+          const spData = docSnap.data();
+          if (spData && (spData.title || spData.name || spData.price)) {
+            const mapped = mapShopifyProductToProduct(spData, docSnap.id);
+            if (matchesGenderFilter(mapped, genderFilter)) {
               matchingProducts.push(mapped);
             }
           }
-        }
-      });
-
-      if (snapshot.docs.length < fetchChunkSize) {
-        keepFetching = false;
+        });
       }
+      return { products: matchingProducts, nextCursor };
     }
 
     return { products: matchingProducts, nextCursor };
@@ -1050,53 +1326,24 @@ export async function fetchProductBatch(
   }
 }
 
-// Helper: Safely fetch shopify_products in paginated batches (250 docs per chunk) to load entire catalog
-export async function fetchShopifyProductsBatched(maxItems: number = 50000): Promise<Product[]> {
-  const itemsMap = new Map<string, Product>();
-  const BATCH_SIZE = 250; // 250 docs per query enables rapid retrieval of large product catalogs
-  let lastDoc: any = null;
-  let hasMore = true;
-
-  try {
-    while (hasMore && itemsMap.size < maxItems) {
-      const fetchCount = Math.min(BATCH_SIZE, maxItems - itemsMap.size);
-      let q = query(collection(db, SHOPIFY_PRODUCTS_COLLECTION), limit(fetchCount));
-      if (lastDoc) {
-        q = query(collection(db, SHOPIFY_PRODUCTS_COLLECTION), startAfter(lastDoc), limit(fetchCount));
-      }
-
-      const snapshot = await getDocs(q);
-      if (snapshot.empty) {
-        hasMore = false;
-        break;
-      }
-
-      snapshot.forEach((d) => {
-        const spData = d.data();
-        if (spData && (spData.title || spData.name || spData.price)) {
-          const mapped = mapShopifyProductToProduct(spData, d.id);
-          itemsMap.set(mapped.id, mapped);
-        }
-      });
-
-      lastDoc = snapshot.docs[snapshot.docs.length - 1];
-      if (snapshot.docs.length < fetchCount) {
-        hasMore = false;
-      }
-    }
-  } catch (err) {
-    console.warn('Notice reading shopify_products collection in batches:', err);
-  }
-
-  return Array.from(itemsMap.values());
+// Helper: Safely fetch shopify_products using streamShopifyProducts with limit(50)
+export async function fetchShopifyProductsBatched(
+  maxItems: number = 50000,
+  genderFilter?: string | null
+): Promise<Product[]> {
+  return streamShopifyProducts({
+    batchSize: 50,
+    genderFilter,
+    maxItems
+  });
 }
 
 // Fetch all products directly and live exclusively from Firestore shopify_products collection
-export async function fetchAllProductsFromFirestore(): Promise<Product[]> {
+export async function fetchAllProductsFromFirestore(genderFilter?: string | null): Promise<Product[]> {
   // Ensure initial products exist in shopify_products if empty
   await ensureProductsSeededToFirestore();
 
-  const products = await fetchShopifyProductsBatched(50000);
+  const products = await fetchShopifyProductsBatched(50000, genderFilter);
   if (products.length > 0) {
     memoryProductsCache = products;
   }
@@ -1105,18 +1352,20 @@ export async function fetchAllProductsFromFirestore(): Promise<Product[]> {
 
 export async function getProductsFromFirestore(gender?: string): Promise<Product[]> {
   try {
-    const fetchPromise = fetchAllProductsFromFirestore();
-    const fetched = await withTimeout(fetchPromise, 30000, memoryProductsCache);
+    if (memoryProductsCache && memoryProductsCache.length > 0) {
+      // Trigger background update silently
+      fetchAllProductsFromFirestore(gender).catch(() => {});
+      const all = memoryProductsCache;
+      if (!gender || gender.toLowerCase() === 'all') return all;
+      return all.filter((p) => matchesGenderFilter(p, gender));
+    }
+
+    const fetchPromise = fetchAllProductsFromFirestore(gender);
+    const fetched = await withTimeout(fetchPromise, 12000, memoryProductsCache);
     const all = fetched || [];
     if (!gender || gender.toLowerCase() === 'all') return all;
 
-    const lowerGender = gender.toLowerCase();
-    const filtered = all.filter((p) => {
-      if (!p.gender) return true;
-      const pG = p.gender.toLowerCase();
-      return pG === lowerGender || pG === 'unisex';
-    });
-    return filtered.length > 0 ? filtered : all;
+    return all.filter((p) => matchesGenderFilter(p, gender));
   } catch (error) {
     console.error('Error in getProductsFromFirestore:', error);
     return memoryProductsCache;
@@ -1124,15 +1373,23 @@ export async function getProductsFromFirestore(gender?: string): Promise<Product
 }
 
 export async function getOrSeedProducts(initialProducts: Product[] = []): Promise<Product[]> {
+  if (memoryProductsCache && memoryProductsCache.length > 0) {
+    fetchAllProductsFromFirestore().catch(() => {});
+    return memoryProductsCache;
+  }
   const fetchPromise = fetchAllProductsFromFirestore();
-  const res = await withTimeout(fetchPromise, 30000, memoryProductsCache);
+  const res = await withTimeout(fetchPromise, 12000, memoryProductsCache);
   return res || [];
 }
 
 // Fetch live products directly from Firestore shopify_products collection
 export async function getLiveProductsFromDb(fallbackProducts: Product[] = []): Promise<Product[]> {
+  if (memoryProductsCache && memoryProductsCache.length > 0) {
+    fetchAllProductsFromFirestore().catch(() => {});
+    return memoryProductsCache;
+  }
   const fetchPromise = fetchAllProductsFromFirestore();
-  const res = await withTimeout(fetchPromise, 30000, memoryProductsCache);
+  const res = await withTimeout(fetchPromise, 12000, memoryProductsCache);
   return res || [];
 }
 
@@ -2116,8 +2373,6 @@ export async function submitBrandAdditionRequest(data: BrandAdditionRequestData)
 // ----------------------------------------------------------------------------
 // SHOPIFY STORES & SHOPIFY PRODUCTS FIRESTORE SERVICES
 // ----------------------------------------------------------------------------
-const SHOPIFY_STORES_COLLECTION = 'shopify_stores';
-const SHOPIFY_PRODUCTS_COLLECTION = 'shopify_products';
 
 export async function saveShopifyStoreToDb(storeData: Partial<ShopifyStore>): Promise<ShopifyStore> {
   const path = SHOPIFY_STORES_COLLECTION;

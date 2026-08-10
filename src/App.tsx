@@ -34,6 +34,7 @@ import {
   getProductsFromFirestore,
   fetchProductBatch,
   shuffleArray,
+  interleaveByBrand,
   INITIAL_D2C_PRODUCTS,
   subscribeWishlist,
   toggleWishlistInDb,
@@ -193,94 +194,36 @@ export default function App() {
   const [lastCursor, setLastCursor] = useState<any>(null);
   const [hasMoreProducts, setHasMoreProducts] = useState<boolean>(true);
 
-  // Load next 100-product chunk from Firestore shopify_products, shuffle, and append
-  const loadMoreProducts = async () => {
-    if (isLoading || !hasMoreProducts) return;
+  // Load complete product catalog from Firestore, interleave by brand across all 29+ stores
+  const loadCompleteCatalog = async (gender?: string | null) => {
     setIsLoading(true);
-
     try {
-      const { products: newProducts, nextCursor } = await fetchProductBatch(lastCursor, 100, selectedGender);
-
-      if (newProducts.length === 0) {
-        setHasMoreProducts(false);
-        return;
+      const data = await getProductsFromFirestore(gender || undefined);
+      if (data && data.length > 0) {
+        const interleaved = interleaveByBrand(data);
+        setProducts(interleaved);
+        if (interleaved.length > 0) {
+          setActiveExpressProduct(interleaved[0]);
+          const urlsToPreload = interleaved.flatMap((p) => p.images || []).filter(Boolean).slice(0, 50);
+          preloadImageUrls(urlsToPreload);
+        }
       }
-
-      const shuffledBatch = shuffleArray(newProducts);
-
-      setProducts((prev) => {
-        const existingIds = new Set(prev.map((p) => p.id));
-        const uniqueNew = shuffledBatch.filter((p) => !existingIds.has(p.id));
-        return [...prev, ...uniqueNew];
-      });
-
-      setLastCursor(nextCursor);
     } catch (error) {
-      console.error("Error loading next product chunk from shopify_products:", error);
+      console.error("Firestore fetch error loading complete catalog:", error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Gender selection handler with live cursor-paginated Firestore shopify_products fetching
+  // Gender selection handler with full catalog loading
   const handleSelectGender = async (gender: string) => {
     setSelectedGender(gender);
-    setIsLoading(true);
-    setLastCursor(null);
-    setHasMoreProducts(true);
-
-    try {
-      const { products: batchData, nextCursor } = await fetchProductBatch(null, 100, gender);
-      if (batchData && batchData.length > 0) {
-        const shuffled = shuffleArray(batchData);
-        setProducts(shuffled);
-        setLastCursor(nextCursor);
-        setActiveExpressProduct(shuffled[0]);
-      } else {
-        const data = await getProductsFromFirestore(gender);
-        if (data && data.length > 0) {
-          const shuffled = shuffleArray(data);
-          setProducts(shuffled);
-          setActiveExpressProduct(shuffled[0]);
-        }
-      }
-    } catch (error) {
-      console.error("Firestore fetch error for shopify_products:", error);
-    } finally {
-      setIsLoading(false);
-    }
+    await loadCompleteCatalog(gender);
   };
 
-  // Load initial 100-product chunk live from Firestore shopify_products
+  // Load complete catalog on mount
   useEffect(() => {
-    setIsLoading(true);
-    fetchProductBatch(null, 100, selectedGender)
-      .then(({ products: initialBatch, nextCursor }) => {
-        if (initialBatch && initialBatch.length > 0) {
-          const shuffled = shuffleArray(initialBatch);
-          setProducts(shuffled);
-          setLastCursor(nextCursor);
-          setActiveExpressProduct(shuffled[0]);
-          const urlsToPreload = shuffled.flatMap((p) => p.images || []).filter(Boolean);
-          preloadImageUrls(urlsToPreload);
-        } else {
-          // Fallback to fetchAllProductsFromFirestore if initial batch returns empty
-          getOrSeedProducts([])
-            .then((loadedProducts) => {
-              if (loadedProducts && loadedProducts.length > 0) {
-                const shuffled = shuffleArray(loadedProducts);
-                setProducts(shuffled);
-                setActiveExpressProduct(shuffled[0]);
-              }
-            });
-        }
-      })
-      .catch((err) => {
-        console.error("Failed to load initial shopify_products batch:", err);
-      })
-      .finally(() => {
-        setIsLoading(false);
-      });
+    loadCompleteCatalog(selectedGender);
   }, []);
 
   // Subscribe to wishlist changes & Try-On credits for the specific user

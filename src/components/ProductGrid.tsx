@@ -74,7 +74,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({
     const relevantProducts = products.filter((p) => {
       if (selectedGender === 'Men') return isMaleProduct(p);
       if (selectedGender === 'Women') return isFemaleProduct(p);
-      if (selectedGender === 'Unisex') return p.gender === 'Unisex';
+      if (selectedGender === 'Unisex') return (p.gender || '').toLowerCase() === 'unisex';
       return true;
     });
 
@@ -101,12 +101,12 @@ export const ProductGrid: React.FC<ProductGridProps> = ({
         } else if (selectedGender === 'Women') {
           if (!isFemaleProduct(p)) return false;
         } else if (selectedGender === 'Unisex') {
-          if (p.gender !== 'Unisex') return false;
+          if ((p.gender || '').toLowerCase() !== 'unisex') return false;
         }
       }
       // Strict Search Query Filter (Exact Word Boundaries & Tokenizer)
       if (searchQuery.trim() !== '') {
-        const extraText = `${p.brand} ${p.category} ${p.specs.map(s => `${s.label} ${s.value}`).join(' ')}`;
+        const extraText = `${p.brand || ''} ${p.category || ''} ${(p.specs || []).map(s => `${s?.label || ''} ${s?.value || ''}`).join(' ')}`;
         if (!strictKeywordMatch(p.name, p.description || '', searchQuery, extraText)) {
           return false;
         }

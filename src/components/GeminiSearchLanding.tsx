@@ -33,7 +33,7 @@ import {
   X
 } from 'lucide-react';
 import { Product, UserAddress, UserSession } from '../types';
-import { logSearchQueryToDb, getLiveProductsFromDb, safeNumber, normalizeStoreAndBrandName, INITIAL_D2C_PRODUCTS, isMaleProduct, isFemaleProduct } from '../lib/firestoreService';
+import { logSearchQueryToDb, getLiveProductsFromDb, safeNumber, normalizeStoreAndBrandName, INITIAL_D2C_PRODUCTS, isMaleProduct, isFemaleProduct, interleaveByBrand, pickNextBrandDiverseProduct } from '../lib/firestoreService';
 import { verifyProductsWithGeminiAI, getAICachedVerification } from '../lib/geminiCategoryVerifier';
 import { normalizeQuery, normalizeText } from '../lib/strictSearch';
 import { BrandLogo } from './BrandLogo';
@@ -173,7 +173,7 @@ export const matchesCategoryFilter = (p: Product, catName: string, genderMode: '
   if (keywords.length > 0) {
     const pName = (p.name || '').toLowerCase();
     const pDesc = (p.description || '').toLowerCase();
-    const pSpecs = (p.specs || []).map((s) => `${s.label} ${s.value}`).join(' ').toLowerCase();
+    const pSpecs = (p.specs || []).map((s) => `${s?.label || ''} ${s?.value || ''}`).join(' ').toLowerCase();
 
     return keywords.some((kw) => pName.includes(kw) || pDesc.includes(kw) || pCatLower.includes(kw) || pSpecs.includes(kw));
   }
@@ -226,6 +226,19 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
   const [noBudgetMatchError, setNoBudgetMatchError] = useState<string | null>(null);
   const [isShopifyConnectOpen, setIsShopifyConnectOpen] = useState<boolean>(false);
 
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [isListening, setIsListening] = useState(false);
+  const [showSearchOverlay, setShowSearchOverlay] = useState(false);
+  const [showTryOnStudio, setShowTryOnStudio] = useState(false);
+  const [customTryOnImage, setCustomTryOnImage] = useState<string | null>(null);
+  const [removalModalOpen, setRemovalModalOpen] = useState(false);
+  const [additionModalOpen, setAdditionModalOpen] = useState(false);
+
+  const clickTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const touchStartXRef = useRef<number | null>(null);
+  const seenProductIdsRef = useRef<Set<string>>(new Set());
+  const recentBrandHistoryRef = useRef<string[]>([]);
+
   const applyActiveFilters = async (
     genderMode: 'Men' | 'Women' | null,
     minP: number | null,
@@ -255,15 +268,16 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
     if (filtered.length > 0) {
       setNoBudgetMatchError(null);
       setMatchedProducts(filtered);
-      let unseen = filtered.filter((p) => !seenProductIdsRef.current.has(p.id));
-      if (unseen.length === 0) {
-        filtered.forEach((p) => seenProductIdsRef.current.delete(p.id));
-        unseen = filtered;
+      const nextItem = pickNextBrandDiverseProduct(
+        filtered,
+        selectedRandomProduct,
+        seenProductIdsRef.current,
+        recentBrandHistoryRef.current
+      );
+      if (nextItem) {
+        setSelectedRandomProduct(nextItem);
+        setActiveImageIndex(0);
       }
-      const nextItem = unseen[Math.floor(Math.random() * unseen.length)];
-      seenProductIdsRef.current.add(nextItem.id);
-      setSelectedRandomProduct(nextItem);
-      setActiveImageIndex(0);
     } else {
       // Fallback to any product matching gender so view always transitions safely
       const genderFallback = pool.filter((p) => genderMode === 'Men' ? isMaleProduct(p) : isFemaleProduct(p));
@@ -271,8 +285,13 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
       if (fallbackList.length > 0) {
         setNoBudgetMatchError(null);
         setMatchedProducts(fallbackList);
-        const item = fallbackList[Math.floor(Math.random() * fallbackList.length)];
-        setSelectedRandomProduct(item);
+        const item = pickNextBrandDiverseProduct(
+          fallbackList,
+          selectedRandomProduct,
+          seenProductIdsRef.current,
+          recentBrandHistoryRef.current
+        );
+        setSelectedRandomProduct(item || fallbackList[0]);
         setActiveImageIndex(0);
       } else {
         setMatchedProducts([]);
@@ -318,32 +337,16 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
     applyActiveFilters(selectedGenderMode, null, null);
   };
 
-  const [activeImageIndex, setActiveImageIndex] = useState(0);
-  const [isListening, setIsListening] = useState(false);
-  const [showSearchOverlay, setShowSearchOverlay] = useState(false);
-  const [showTryOnStudio, setShowTryOnStudio] = useState(false);
-  const [customTryOnImage, setCustomTryOnImage] = useState<string | null>(null);
-  const [removalModalOpen, setRemovalModalOpen] = useState(false);
-  const [additionModalOpen, setAdditionModalOpen] = useState(false);
-
-  const clickTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const touchStartXRef = useRef<number | null>(null);
-  const seenProductIdsRef = useRef<Set<string>>(new Set());
-
   // Shuffle to next product within active category & filters
   const handleShuffleNextProduct = () => {
     if (matchedProducts.length > 0) {
-      let unseen = matchedProducts.filter((p) => !seenProductIdsRef.current.has(p.id));
-      if (unseen.length === 0) {
-        matchedProducts.forEach((p) => seenProductIdsRef.current.delete(p.id));
-        unseen = matchedProducts;
-      }
-      const currentId = selectedRandomProduct?.id;
-      const candidates = unseen.filter((p) => p.id !== currentId);
-      const pool = candidates.length > 0 ? candidates : unseen;
-      const nextItem = pool[Math.floor(Math.random() * pool.length)];
+      const nextItem = pickNextBrandDiverseProduct(
+        matchedProducts,
+        selectedRandomProduct,
+        seenProductIdsRef.current,
+        recentBrandHistoryRef.current
+      );
       if (nextItem) {
-        seenProductIdsRef.current.add(nextItem.id);
         setSelectedRandomProduct(nextItem);
         setActiveImageIndex(0);
       }
@@ -407,7 +410,7 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
       } else if (searchGenderFilter === 'Women') {
         return isFemaleProduct(p);
       } else if (searchGenderFilter === 'Unisex') {
-        return !isMaleProduct(p) && !isFemaleProduct(p);
+        return (p.gender || '').toLowerCase() === 'unisex';
       }
       return true;
     });
@@ -416,7 +419,7 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
   // Dynamic Category list merging base categories with actual Shopify product categories
   const activeCategoryList = useMemo(() => {
     const baseList = selectedGenderMode === 'Women' ? FEMALE_CATEGORIES : MALE_CATEGORIES;
-    const existingIds = new Set(baseList.map((c) => c.id.toLowerCase()));
+    const existingIds = new Set(baseList.map((c) => (c?.id || '').toLowerCase()));
 
     const extraCats: { id: string; label: string; keywords: string[] }[] = [];
 
