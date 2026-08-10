@@ -24,8 +24,18 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   const [selectedSize, setSelectedSize] = useState(product.sizes ? product.sizes[0] : '');
   const [copiedCoupon, setCopiedCoupon] = useState(false);
 
-  const priceSavings = product.marketplacePrice - product.directPrice;
-  const savingsPercent = Math.round((priceSavings / product.marketplacePrice) * 100);
+  const dPrice = typeof product.directPrice === 'number' && !isNaN(product.directPrice) && product.directPrice > 0
+    ? (product.directPrice < 50 ? Math.round(product.directPrice * 1000) : Math.round(product.directPrice))
+    : (typeof product.price === 'number' && product.price > 0 ? (product.price < 50 ? Math.round(product.price * 1000) : Math.round(product.price)) : 1299);
+
+  const rawMkt = typeof product.marketplacePrice === 'number' && !isNaN(product.marketplacePrice) && product.marketplacePrice > 0
+    ? (product.marketplacePrice < 50 ? Math.round(product.marketplacePrice * 1000) : Math.round(product.marketplacePrice))
+    : (product.compare_at_price || Math.round(dPrice * 1.35));
+
+  const mktPrice = rawMkt > dPrice ? rawMkt : Math.round(dPrice * 1.35);
+
+  const priceSavings = Math.max(0, mktPrice - dPrice);
+  const savingsPercent = Math.max(0, Math.round((priceSavings / mktPrice) * 100));
 
   const handleCopyCoupon = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -166,7 +176,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                   Official Direct Price
                 </span>
                 <span className="text-xl font-black font-mono text-white tracking-tight">
-                  ₹{product.directPrice.toLocaleString('en-IN')}
+                  ₹{dPrice.toLocaleString('en-IN')}
                 </span>
               </div>
 
@@ -175,13 +185,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({
                   Original / Compare Price
                 </span>
                 <span className="text-sm font-bold font-mono text-zinc-500 line-through">
-                  ₹{(product.compare_at_price || product.marketplacePrice).toLocaleString('en-IN')}
+                  ₹{mktPrice.toLocaleString('en-IN')}
                 </span>
               </div>
             </div>
 
             {/* Price Drop Indicator */}
-            {(product.price_dropped || (product.compare_at_price && product.compare_at_price > product.directPrice)) && (
+            {(product.price_dropped || (product.compare_at_price && product.compare_at_price > dPrice)) && (
               <div className="px-2 py-1 rounded bg-rose-500/20 text-rose-400 text-[11px] font-mono font-bold border border-rose-500/30 flex items-center gap-1">
                 <span>🔥 Price Dropped</span>
                 {product.previous_price && (

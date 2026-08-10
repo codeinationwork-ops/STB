@@ -319,6 +319,31 @@ CRITICAL INSTRUCTION: Execute the image_generation tool silently. Do NOT output 
   }
 });
 
+// Helper to safely parse numeric prices from various input formats (strings with commas, symbols, numbers, objects)
+function safePriceNumber(val: any, fallback = 1299): number {
+  if (val === null || val === undefined || val === '') return fallback;
+  if (typeof val === 'number') {
+    if (isNaN(val) || !isFinite(val)) return fallback;
+    if (val > 0 && val < 50) return Math.round(val * 1000);
+    return val > 0 ? val : fallback;
+  }
+  if (typeof val === 'object' && val !== null) {
+    if (val.amount !== undefined) return safePriceNumber(val.amount, fallback);
+    if (val.price !== undefined) return safePriceNumber(val.price, fallback);
+    if (val.direct_price !== undefined) return safePriceNumber(val.direct_price, fallback);
+    if (val.directPrice !== undefined) return safePriceNumber(val.directPrice, fallback);
+  }
+  if (typeof val === 'string') {
+    const cleaned = val.replace(/,/g, '').replace(/[^0-9.]/g, '');
+    if (!cleaned) return fallback;
+    const parsed = parseFloat(cleaned);
+    if (isNaN(parsed) || !isFinite(parsed) || parsed <= 0) return fallback;
+    if (parsed > 0 && parsed < 50) return Math.round(parsed * 1000);
+    return parsed;
+  }
+  return fallback;
+}
+
 // Helper to parse Firestore REST API document into a Product object
 function parseFirestoreRestDoc(doc: any): any {
   const docId = doc.name ? doc.name.split('/').pop() : `prod-${Date.now()}`;
@@ -348,8 +373,9 @@ function parseFirestoreRestDoc(doc: any): any {
   const name = data.name || data.title || 'D2C Product';
   const brand = data.brand || data.brand_name || 'D2C Brand';
   const category = data.category || data.category_name || 'Streetwear & Apparel';
-  const directPrice = Number(data.directPrice ?? data.direct_price ?? data.price ?? 1299);
-  const marketplacePrice = Number(data.marketplacePrice ?? data.marketplace_price ?? Math.round(directPrice * 1.3));
+  const directPrice = safePriceNumber(data.directPrice ?? data.direct_price ?? data.price, 1299);
+  const rawCompare = safePriceNumber(data.marketplacePrice ?? data.marketplace_price ?? data.compare_at_price, 0);
+  const marketplacePrice = rawCompare > directPrice ? rawCompare : Math.round(directPrice * 1.35);
   const images = data.images || (data.media?.gallery_images) || ['https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=800'];
   const specs = data.specs || data.normalized_specs || [];
 
@@ -532,9 +558,9 @@ async function parseHumanIntent(query: string, categoryContext?: string): Promis
 
   let genderTarget: 'Men' | 'Women' | 'Unisex' | null = null;
   const lowerQ = trimmed.toLowerCase();
-  if (/\b(women|female|ladies|girls)\b/i.test(lowerQ)) {
+  if (/\b(women|womens|women's|female|ladies|girls|woman|girl)\b/i.test(lowerQ)) {
     genderTarget = 'Women';
-  } else if (/\b(men|male|guys|gents|boys)\b/i.test(lowerQ)) {
+  } else if (/\b(men|mens|men's|male|guys|gents|boys|man|boy)\b/i.test(lowerQ)) {
     genderTarget = 'Men';
   }
 
@@ -649,17 +675,21 @@ function evaluateProductHumanStyle(p: any, intent: Awaited<ReturnType<typeof par
 
   // 3. HARD EXCLUDE: Gender Mis-match
   if (intent.gender_target) {
-    const pGender = String(p.gender || 'Unisex').toLowerCase();
+    const pGender = String(p.gender || 'Unisex').trim().toLowerCase();
     const targetG = intent.gender_target.toLowerCase();
-    const fullText = `${p.name} ${p.brand} ${p.category} ${p.description || ''}`.toLowerCase();
-    const isFemale = /\b(women|womens|female|ladies|girls|woman|dress|skirt|saree|sari|lehenga|kurti|gown|bikini|blouse|heels|handbag|lingerie|bra|kaftan|chikankari|palazzo|salwar|dupatta|corset|camisole|midi|maxi|bodycon|earrings|lipstick)\b/i.test(fullText);
-    const isMale = /\b(men|mens|male|guys|gents|gentleman|boy|boys|man|sherwani|boxer|boxers|trunks|briefs|tuxedo|chinos)\b/i.test(fullText);
+    const fullText = `${p.name || ''} ${p.brand || ''} ${p.category || ''} ${p.description || ''}`.toLowerCase();
+    const isFemaleTerm = /\b(women|womens|women's|female|females|ladies|lady|girl|girls|woman|woman's|dress|dresses|skirt|skirts|saree|saris|sarees|sari|lehenga|lehengas|choli|dupatta|dupattas|bra|bras|bralette|crop-top|crop top|cropped top|kurti|kurtis|gown|gowns|bikini|monokini|frock|frocks|blouse|blouses|heels|handbag|handbags|purse|purses|lingerie|kaftan|kaftans|chikankari|palazzo|palazzos|salwar|chaniya|wedges|stilettos|clutch|clutches|corset|corsets|camisole|cami|midi|maxi|maxis|bodycon|nighty|nightgown|babydoll|leggings|jeggings|shrug|shrugs|earrings|earring|necklace|lipstick|scrunchie|scrunchies|anarkali|sharara|gharara|halter|off-shoulder|tube top|peplum|push-up|stockings|hairband|tiara|jumpsuit|makeup|chanderi|kanjeevaram|banarasi|lucknowi|gottapatti|zardosi|choker|jhumka|jhumkas|mangalsutra|jutti|juttis|kolhapuri|kolhapuris)\b/i.test(fullText);
+    const isFemaleBrand = ['weaverstory', 'craftsvilla', 'biba', 'w for woman', 'ada chikankari', 'libas', 'kalki fashion', 'house of indya', 'fizzy goblet', 'senco gold'].includes(String(p.brand || '').toLowerCase());
+    const isFemaleCat = ['sarees & handloom', 'kurtis & ethnic suits', 'lehenga & festive', 'footwear & juttis', 'jewelry & accessories', 'dresses & western'].some(fc => String(p.category || '').toLowerCase().includes(fc));
+    const isFemale = isFemaleTerm || isFemaleBrand || isFemaleCat || pGender === 'women' || pGender === 'female' || pGender === 'ladies';
+
+    const isMale = /\b(men|mens|male|guys|gents|gentleman|boy|boys|man|sherwani|boxer|boxers|trunks|briefs|tuxedo|chinos)\b/i.test(fullText) || pGender === 'men' || pGender === 'male';
 
     if (targetG === 'women' && (pGender === 'men' || (isMale && !isFemale))) {
       return { product: p, score: -1, reason: `Product is for Men, user requested Women` };
     }
     if (targetG === 'men') {
-      if (pGender === 'women' || isFemale) {
+      if (isFemale || pGender === 'women' || pGender === 'female') {
         return { product: p, score: -1, reason: `Product is female clothing or for Women, user requested Men` };
       }
     }
@@ -1860,8 +1890,8 @@ app.post(['/api/shopify/scrape', '/api/v1/shopify/scrape'], async (req, res) => 
             if (seenVariantIds.has(String(numericVariantId))) continue;
             seenVariantIds.add(String(numericVariantId));
 
-            const price = parseFloat(variantNode.price?.amount || 0);
-            const compare_price = variantNode.compareAtPrice ? parseFloat(variantNode.compareAtPrice.amount) : null;
+            const price = safePriceNumber(variantNode.price?.amount || variantNode.price, 1299);
+            const compare_price = variantNode.compareAtPrice ? safePriceNumber(variantNode.compareAtPrice.amount || variantNode.compareAtPrice, 0) : null;
 
             let discount_pct = 0;
             if (compare_price && compare_price > price) {
@@ -2008,8 +2038,8 @@ app.post(['/api/shopify/scrape', '/api/v1/shopify/scrape'], async (req, res) => 
               if (seenVariantIds.has(String(variant_id))) continue;
               seenVariantIds.add(String(variant_id));
 
-              const price = parseFloat(first_variant.price || 0);
-              const compare_price = first_variant.compare_at_price ? parseFloat(first_variant.compare_at_price) : null;
+              const price = safePriceNumber(first_variant.price || item.price || item.price_min, 1299);
+              const compare_price = first_variant.compare_at_price ? safePriceNumber(first_variant.compare_at_price, 0) : null;
 
               let discount_pct = 0;
               if (compare_price && compare_price > price) {

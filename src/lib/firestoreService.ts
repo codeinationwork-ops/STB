@@ -204,9 +204,285 @@ async function fetchQueryInChunks(
   return allDocs;
 }
 
-// Memory backup cache in case Firestore is unreachable/offline
-export const INITIAL_D2C_PRODUCTS: Product[] = [];
-const DEPRECATED_DEMO_PRODUCTS: Product[] = [
+// Memory backup cache & multi-category master catalog seed
+export const INITIAL_D2C_PRODUCTS: Product[] = [
+  // ==================== SAREES & HANDLOOM ====================
+  {
+    id: 'saree-01',
+    name: 'Kanjeevaram Pure Silk Gold Zari Saree',
+    brand: 'WeaverStory',
+    category: 'Sarees & Handloom',
+    gender: 'Women',
+    directPrice: 8999,
+    marketplacePrice: 13999,
+    marketplaceName: 'WeaverStory Direct vs Marketplace',
+    images: [
+      'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=800',
+      'https://images.unsplash.com/photo-1617627143750-d86bc21e42bb?w=800'
+    ],
+    specs: [
+      { label: 'Fabric', value: '100% Pure Mulberry Silk' },
+      { label: 'Weave Type', value: 'Kanjivaram Handloom' },
+      { label: 'Zari Type', value: 'Tested Gold Zari' },
+      { label: 'Blouse Piece', value: 'Included (Unstitched 80cm)' }
+    ],
+    stockLeft: 12,
+    rating: 4.9,
+    reviewsCount: 142,
+    trendingScore: 99,
+    couponCode: 'WEAVERDIRECT15',
+    couponDiscount: 15,
+    officialUrl: 'https://weaverstory.com/products/kanjeevaram-gold-zari-saree',
+    description: 'Authentic Handloom Kanjeevaram pure silk saree with opulent temple borders and contrast pallu.'
+  },
+  {
+    id: 'saree-02',
+    name: 'Banarasi Silk Brocade Bridal Saree',
+    brand: 'Craftsvilla',
+    category: 'Sarees & Handloom',
+    gender: 'Women',
+    directPrice: 6499,
+    marketplacePrice: 9999,
+    marketplaceName: 'Craftsvilla Direct vs Amazon/Myntra',
+    images: [
+      'https://images.unsplash.com/photo-1617627143750-d86bc21e42bb?w=800',
+      'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=800'
+    ],
+    specs: [
+      { label: 'Fabric', value: 'Banarasi Katan Silk' },
+      { label: 'Design', value: 'Kadwa Flora Jaal Weave' },
+      { label: 'Occasion', value: 'Bridal / Wedding Festivities' }
+    ],
+    stockLeft: 18,
+    rating: 4.8,
+    reviewsCount: 98,
+    trendingScore: 96,
+    couponCode: 'CRAFTSDIRECT10',
+    couponDiscount: 10,
+    officialUrl: 'https://craftsvilla.com/products/banarasi-brocade-saree',
+    description: 'Regal Banarasi silk saree woven with golden zari floral jaal and intricate pallu work.'
+  },
+  {
+    id: 'saree-03',
+    name: 'Chanderi Handloom Cotton Silk Saree',
+    brand: 'Fabindia',
+    category: 'Sarees & Handloom',
+    gender: 'Women',
+    directPrice: 3499,
+    marketplacePrice: 5299,
+    marketplaceName: 'Fabindia Direct vs Flipkart/Amazon',
+    images: [
+      'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=800',
+      'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=800'
+    ],
+    specs: [
+      { label: 'Fabric', value: 'Chanderi Cotton Silk Blend' },
+      { label: 'Texture', value: 'Lightweight & Sheer' },
+      { label: 'Origin', value: 'Chanderi, Madhya Pradesh' }
+    ],
+    stockLeft: 25,
+    rating: 4.7,
+    reviewsCount: 210,
+    trendingScore: 92,
+    couponCode: 'FABDIRECT10',
+    couponDiscount: 10,
+    officialUrl: 'https://fabindia.com/products/chanderi-cotton-silk-saree',
+    description: 'Lightweight and elegant Chanderi cotton silk saree featuring delicate gold tested zari borders.'
+  },
+  {
+    id: 'saree-04',
+    name: 'Organza Floral Embroidered Pastel Saree',
+    brand: 'House of Indya',
+    category: 'Sarees & Handloom',
+    gender: 'Women',
+    directPrice: 2999,
+    marketplacePrice: 4499,
+    marketplaceName: 'Indya Direct vs Myntra',
+    images: [
+      'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=800',
+      'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=800'
+    ],
+    specs: [
+      { label: 'Fabric', value: 'Premium Sheer Organza' },
+      { label: 'Work', value: 'Resham Floral Threadwork' },
+      { label: 'Style', value: 'Contemporary Partywear' }
+    ],
+    stockLeft: 15,
+    rating: 4.8,
+    reviewsCount: 165,
+    trendingScore: 95,
+    couponCode: 'INDYADIRECT',
+    couponDiscount: 12,
+    officialUrl: 'https://houseofindya.com/products/organza-floral-saree',
+    description: 'Charming pastel organza saree detailed with hand-embroidered floral threadwork motifs.'
+  },
+  {
+    id: 'saree-05',
+    name: 'Lucknowi Chikankari Tissue Georgette Saree',
+    brand: 'Ada Chikankari',
+    category: 'Sarees & Handloom',
+    gender: 'Women',
+    directPrice: 4299,
+    marketplacePrice: 6599,
+    marketplaceName: 'Ada Direct vs Amazon/Flipkart',
+    images: [
+      'https://images.unsplash.com/photo-1617627143750-d86bc21e42bb?w=800',
+      'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=800'
+    ],
+    specs: [
+      { label: 'Fabric', value: 'Faux Georgette' },
+      { label: 'Embroidery', value: 'Handmade Bakhiya & Phanda Stitches' },
+      { label: 'Origin', value: 'Lucknow, Uttar Pradesh' }
+    ],
+    stockLeft: 20,
+    rating: 4.9,
+    reviewsCount: 310,
+    trendingScore: 97,
+    couponCode: 'ADADIRECT10',
+    couponDiscount: 10,
+    officialUrl: 'https://adachikan.com/products/georgette-chikankari-saree',
+    description: 'Handcrafted Lucknowi Chikankari saree woven with delicate shadow embroidery and pearl highlights.'
+  },
+
+  // ==================== KURTIS & ETHNIC SUITS ====================
+  {
+    id: 'kurti-01',
+    name: 'Lucknowi Chikankari Handloom Cotton Kurti',
+    brand: 'Ada Chikankari',
+    category: 'Kurtis & Ethnic Suits',
+    gender: 'Women',
+    directPrice: 1899,
+    marketplacePrice: 2899,
+    marketplaceName: 'Ada Direct vs Amazon/Myntra',
+    images: [
+      'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=800',
+      'https://images.unsplash.com/photo-1617627143750-d86bc21e42bb?w=800'
+    ],
+    specs: [
+      { label: 'Fabric', value: '100% Breathable Cotton' },
+      { label: 'Craft', value: 'Handmade Lucknowi Chikankari' },
+      { label: 'Fit', value: 'Straight Cut Comfort' }
+    ],
+    stockLeft: 30,
+    rating: 4.8,
+    reviewsCount: 240,
+    trendingScore: 98,
+    couponCode: 'ADADIRECT10',
+    couponDiscount: 10,
+    officialUrl: 'https://adachikan.com/products/cotton-chikankari-kurti',
+    description: 'Breathable 100% cotton straight kurti decorated with authentic hand-stitched Chikankari motifs.'
+  },
+  {
+    id: 'kurti-02',
+    name: 'Flared Anarkali Kurta & Palazzo Dupatta Set',
+    brand: 'Biba',
+    category: 'Kurtis & Ethnic Suits',
+    gender: 'Women',
+    directPrice: 3299,
+    marketplacePrice: 4999,
+    marketplaceName: 'Biba Direct vs Myntra/Ajio',
+    images: [
+      'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=800',
+      'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=800'
+    ],
+    specs: [
+      { label: 'Set Includes', value: 'Anarkali Kurta, Palazzo & Chiffon Dupatta' },
+      { label: 'Fabric', value: 'Cotton Silk Blend' },
+      { label: 'Sleeve Length', value: 'Three-Quarter Sleeves' }
+    ],
+    stockLeft: 22,
+    rating: 4.9,
+    reviewsCount: 180,
+    trendingScore: 99,
+    couponCode: 'BIBADIRECT',
+    couponDiscount: 15,
+    officialUrl: 'https://biba.in/products/anarkali-kurta-set',
+    description: 'Festive 3-piece Anarkali suit set with gold foil print and matching embroidered palazzo pants.'
+  },
+  {
+    id: 'kurti-03',
+    name: 'Handblock Printed Cotton Straight Kurta',
+    brand: 'W for Woman',
+    category: 'Kurtis & Ethnic Suits',
+    gender: 'Women',
+    directPrice: 1499,
+    marketplacePrice: 2299,
+    marketplaceName: 'W Direct vs Flipkart/Myntra',
+    images: [
+      'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=800',
+      'https://images.unsplash.com/photo-1617627143750-d86bc21e42bb?w=800'
+    ],
+    specs: [
+      { label: 'Print Type', value: 'Sanganeri Handblock Print' },
+      { label: 'Neckline', value: 'Mandarin Collar with Placket' },
+      { label: 'Length', value: 'Calf Length' }
+    ],
+    stockLeft: 40,
+    rating: 4.7,
+    reviewsCount: 125,
+    trendingScore: 91,
+    couponCode: 'WDIRECT10',
+    couponDiscount: 10,
+    officialUrl: 'https://wforwoman.com/products/handblock-kurta',
+    description: 'Versatile everyday straight cotton kurta styled with traditional Sanganeri handblock motifs.'
+  },
+  {
+    id: 'kurti-04',
+    name: 'Gottapatti Work Sharara Suit Set',
+    brand: 'Libas',
+    category: 'Kurtis & Ethnic Suits',
+    gender: 'Women',
+    directPrice: 2499,
+    marketplacePrice: 3899,
+    marketplaceName: 'Libas Direct vs Myntra',
+    images: [
+      'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=800',
+      'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=800'
+    ],
+    specs: [
+      { label: 'Set Details', value: 'Short Kurti, Flared Sharara & Dupatta' },
+      { label: 'Embroidery', value: 'Rajasthani Gottapatti Detail' }
+    ],
+    stockLeft: 19,
+    rating: 4.8,
+    reviewsCount: 155,
+    trendingScore: 94,
+    couponCode: 'LIBASDIRECT',
+    couponDiscount: 10,
+    officialUrl: 'https://libas.in/products/gottapatti-sharara-set',
+    description: 'Vibrant ethnic sharara suit set tailored with Gottapatti embroidery on neckline and hem.'
+  },
+
+  // ==================== LEHENGA & FESTIVE WEAR ====================
+  {
+    id: 'lehenga-01',
+    name: 'Royal Velvet Zardosi Heavy Bridal Lehenga',
+    brand: 'Kalki Fashion',
+    category: 'Lehenga & Festive',
+    gender: 'Women',
+    directPrice: 24999,
+    marketplacePrice: 38999,
+    marketplaceName: 'Kalki Direct vs Multi-brand Boutiques',
+    images: [
+      'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=800',
+      'https://images.unsplash.com/photo-1617627143750-d86bc21e42bb?w=800'
+    ],
+    specs: [
+      { label: 'Fabric', value: 'Micro Velvet & Net' },
+      { label: 'Work', value: 'Heavy Zardosi, Sequin & Dori Work' },
+      { label: 'Flair', value: '4.5 Meters Heavy Kalis' }
+    ],
+    stockLeft: 5,
+    rating: 5.0,
+    reviewsCount: 88,
+    trendingScore: 100,
+    couponCode: 'KALKIDIRECT',
+    couponDiscount: 10,
+    officialUrl: 'https://kalkifashion.com/products/zardosi-velvet-lehenga',
+    description: 'Majestic crimson velvet bridal lehenga embroidered with antique gold zardosi and sequins.'
+  },
+
+  // ==================== STREETWEAR & WESTERN ====================
   {
     id: 'snitch-1',
     name: '380 GSM Heavyweight Boxy Hoodie',
@@ -277,388 +553,103 @@ const DEPRECATED_DEMO_PRODUCTS: Product[] = [
     description: 'Ultra-soft fleece sweatshirt designed for daily comfort.'
   },
   {
-    id: 'veirdo-1',
-    name: 'Acid Wash Oversized Graphic Hoodie',
-    brand: 'Veirdo',
-    category: 'Streetwear & Oversized',
-    gender: 'Unisex',
-    directPrice: 1099,
-    marketplacePrice: 1599,
-    marketplaceName: 'Veirdo Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1509967419530-da38b4704bc6?w=800'],
-    specs: [
-      { label: 'Wash', value: 'Vintage Acid Wash' },
-      { label: 'GSM', value: '340 GSM' }
-    ],
-    stockLeft: 11,
-    rating: 4.7,
-    reviewsCount: 112,
-    trendingScore: 94,
-    couponCode: 'VEIRDODIRECT',
-    couponDiscount: 12,
-    officialUrl: 'https://veirdo.in/products/acid-wash-hoodie',
-    description: 'Retro acid wash unisex hoodie featuring high-density puff print.'
-  },
-  {
-    id: 'souledstore-1',
-    name: 'Anime Edition Heavy Pullover Hoodie',
-    brand: 'Souled Store',
-    category: 'Streetwear & Oversized',
-    gender: 'Unisex',
-    directPrice: 1399,
-    marketplacePrice: 1999,
-    marketplaceName: 'Souled Store Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1512436991641-6745cdb1723f?w=800'],
-    specs: [
-      { label: 'Print', value: 'Licensed Screen Print' },
-      { label: 'Fabric', value: '100% Combed Cotton' }
-    ],
-    stockLeft: 8,
-    rating: 4.9,
-    reviewsCount: 310,
-    trendingScore: 99,
-    couponCode: 'SOULEDDIRECT',
-    couponDiscount: 10,
-    officialUrl: 'https://thesouledstore.com/products/anime-hoodie',
-    description: 'Official licensed anime graphic hoodie in high grade cotton.'
-  },
-  {
-    id: 'urbanic-1',
-    name: 'Ribbed Knit Cropped Top',
-    brand: 'Urbanic',
-    category: 'Streetwear & Oversized',
-    gender: 'Women',
-    directPrice: 890,
-    marketplacePrice: 1290,
-    marketplaceName: 'Urbanic Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=800'],
-    specs: [
-      { label: 'Knit', value: 'Fine Stretch Ribbed' },
-      { label: 'Style', value: 'Cropped Fit' }
-    ],
-    stockLeft: 22,
-    rating: 4.7,
-    reviewsCount: 145,
-    trendingScore: 95,
-    couponCode: 'URBANICDIRECT',
-    couponDiscount: 15,
-    officialUrl: 'https://urbanic.com/products/ribbed-crop-top',
-    description: 'Trendy ribbed knit cropped top with soft stretch contouring.'
-  },
-  {
-    id: 'urbanic-2',
-    name: 'High-Waisted Wide Leg Tailored Trousers',
-    brand: 'Urbanic',
-    category: 'Streetwear & Oversized',
-    gender: 'Women',
-    directPrice: 1490,
-    marketplacePrice: 2190,
-    marketplaceName: 'Urbanic Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1509631179647-0177331693ae?w=800'],
-    specs: [
-      { label: 'Waist', value: 'High Rise Fitted' },
-      { label: 'Leg', value: 'Wide Drape Flow' }
-    ],
-    stockLeft: 16,
-    rating: 4.8,
-    reviewsCount: 198,
-    trendingScore: 96,
-    couponCode: 'URBANICDIRECT',
-    couponDiscount: 15,
-    officialUrl: 'https://urbanic.com/products/wide-leg-trousers',
-    description: 'Chic high-waisted tailored trousers with smooth drape silhouette.'
-  },
-  {
-    id: 'bhaane-1',
-    name: 'Modern Utility Boxy Oversized Shirt',
-    brand: 'Bhaane',
-    category: 'Streetwear & Oversized',
-    gender: 'Unisex',
-    directPrice: 2200,
-    marketplacePrice: 3100,
-    marketplaceName: 'Bhaane Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1598033129183-c4f50c736f10?w=800'],
-    specs: [
-      { label: 'Fabric', value: 'Handwoven Organic Cotton' },
-      { label: 'Cut', value: 'Boxy Drop Shoulder' }
-    ],
-    stockLeft: 7,
-    rating: 4.9,
-    reviewsCount: 62,
-    trendingScore: 93,
-    couponCode: 'BHAANEDIRECT',
-    couponDiscount: 10,
-    officialUrl: 'https://bhaane.com/products/boxy-utility-shirt',
-    description: 'Artisanal organic cotton boxy shirt with minimal chest pocket design.'
-  },
-  {
-    id: 'minimalist-1',
-    name: '10% Niacinamide + Matmarine Face Serum 30ml',
-    brand: 'Minimalist',
-    category: 'Clean Beauty & Skincare',
-    gender: 'Unisex',
-    directPrice: 599,
-    marketplacePrice: 799,
-    marketplaceName: 'Minimalist Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=800'],
-    specs: [
-      { label: 'Active', value: '10% Niacinamide' },
-      { label: 'Skin Type', value: 'Oily & Acne Prone' }
-    ],
-    stockLeft: 35,
-    rating: 4.9,
-    reviewsCount: 420,
-    trendingScore: 99,
-    couponCode: 'MINIMALISTDIRECT',
-    couponDiscount: 10,
-    officialUrl: 'https://beminimalist.co/products/niacinamide-10',
-    description: 'Niacinamide serum formulated to reduce sebum production and blemishes.'
-  },
-  {
-    id: 'minimalist-2',
-    name: 'SPF 50 PA++++ Lightweight Sunscreen Fluid 50g',
-    brand: 'Minimalist',
-    category: 'Clean Beauty & Skincare',
-    gender: 'Unisex',
-    directPrice: 499,
-    marketplacePrice: 699,
-    marketplaceName: 'Minimalist Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1556228720-195a672e8a03?w=800'],
-    specs: [
-      { label: 'Protection', value: 'SPF 50 PA++++' },
-      { label: 'Finish', value: 'Zero White Cast Matte' }
-    ],
-    stockLeft: 40,
-    rating: 4.8,
-    reviewsCount: 512,
-    trendingScore: 97,
-    couponCode: 'MINIMALISTDIRECT',
-    couponDiscount: 10,
-    officialUrl: 'https://beminimalist.co/products/sunscreen-spf-50',
-    description: 'Broad spectrum sunscreen with lightweight non-greasy absorption.'
-  },
-  {
-    id: 'comet-1',
-    name: 'Aeon Retro Chunky Low-Top Sneakers',
-    brand: 'Comet',
-    category: 'Indie Footwear',
+    id: 'shirt-01',
+    name: 'Pleated Linen Relaxed Fit Trousers',
+    brand: 'Rare Rabbit',
+    category: 'Western & Formal',
     gender: 'Men',
-    directPrice: 2999,
+    directPrice: 2899,
     marketplacePrice: 4299,
-    marketplaceName: 'Comet Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800'],
+    marketplaceName: 'Rare Rabbit Direct vs Ajio/Myntra',
+    images: ['https://images.unsplash.com/photo-1479064555552-3ef4979f8908?w=800'],
     specs: [
-      { label: 'Sole', value: 'TPU Cushioning Sole' },
-      { label: 'Upper', value: 'Full Grain Leather & Mesh' }
-    ],
-    stockLeft: 12,
-    rating: 4.8,
-    reviewsCount: 175,
-    trendingScore: 97,
-    couponCode: 'COMETDIRECT',
-    couponDiscount: 15,
-    officialUrl: 'https://wearcomet.com/products/aeon-retro',
-    description: 'Chunky retro low-top sneakers crafted in premium leather paneled mesh.'
-  },
-  {
-    id: 'neemans-1',
-    name: 'ReLive Knit Merino Wool Slip-On Shoes',
-    brand: "Neeman's",
-    category: 'Indie Footwear',
-    gender: 'Unisex',
-    directPrice: 2299,
-    marketplacePrice: 3299,
-    marketplaceName: "Neeman's Direct vs Marketplace",
-    images: ['https://images.unsplash.com/photo-1560769629-975ec94e6a86?w=800'],
-    specs: [
-      { label: 'Material', value: 'Recycled Merino Wool Knit' },
-      { label: 'Insole', value: 'Memory Foam Cushioning' }
-    ],
-    stockLeft: 15,
-    rating: 4.7,
-    reviewsCount: 210,
-    trendingScore: 94,
-    couponCode: 'NEEMANSDIRECT',
-    couponDiscount: 12,
-    officialUrl: 'https://neemans.com/products/relive-knit',
-    description: 'Breathable lightweight slip-ons made from sustainable Merino wool.'
-  },
-  {
-    id: 'bluetokai-1',
-    name: 'Attikan Estate Dark Roast Coffee Beans 500g',
-    brand: 'Blue Tokai',
-    category: 'Artisanal Coffee',
-    gender: 'Unisex',
-    directPrice: 650,
-    marketplacePrice: 850,
-    marketplaceName: 'Blue Tokai Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=800'],
-    specs: [
-      { label: 'Roast', value: 'Dark Roast Single Estate' },
-      { label: 'Notes', value: 'Dark Chocolate & Roasted Almond' }
-    ],
-    stockLeft: 50,
-    rating: 4.9,
-    reviewsCount: 680,
-    trendingScore: 99,
-    couponCode: 'BLUETOKAIDIRECT',
-    couponDiscount: 10,
-    officialUrl: 'https://bluetokaicoffee.com/products/attikan-estate',
-    description: 'Single estate 100% Arabica coffee roasted fresh upon order.'
-  },
-  {
-    id: 'nobero-2',
-    name: 'Everyday Comfort Stretch Jogger Trousers',
-    brand: 'Nobero',
-    category: 'Streetwear & Oversized',
-    gender: 'Men',
-    directPrice: 699,
-    marketplacePrice: 1199,
-    marketplaceName: 'Nobero Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1552902865-b72c031ac5ea?w=800'],
-    specs: [
-      { label: 'Fit', value: 'Slim Jogger Taper' },
-      { label: 'Fabric', value: 'Cotton Lycra Blend' }
-    ],
-    stockLeft: 25,
-    rating: 4.7,
-    reviewsCount: 180,
-    trendingScore: 94,
-    couponCode: 'NOBERODIRECT',
-    couponDiscount: 10,
-    officialUrl: 'https://nobero.com/products/stretch-jogger-trousers',
-    description: 'Lightweight stretch cotton jogger trousers for all-day active comfort.'
-  },
-  {
-    id: 'veirdo-2',
-    name: 'Casual Lightweight Cotton Chino Trousers',
-    brand: 'Veirdo',
-    category: 'Streetwear & Oversized',
-    gender: 'Men',
-    directPrice: 749,
-    marketplacePrice: 1299,
-    marketplaceName: 'Veirdo Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?w=800'],
-    specs: [
-      { label: 'Style', value: 'Classic Chino Cut' },
-      { label: 'Fabric', value: '100% Breathable Twill' }
-    ],
-    stockLeft: 19,
-    rating: 4.6,
-    reviewsCount: 142,
-    trendingScore: 92,
-    couponCode: 'VEIRDODIRECT',
-    couponDiscount: 12,
-    officialUrl: 'https://veirdo.in/products/chino-trousers',
-    description: 'Versatile cotton chino trousers with reinforced stitching and clean front.'
-  },
-  {
-    id: 'urbanic-3',
-    name: 'Linen Blend High-Rise Ankle Trousers',
-    brand: 'Urbanic',
-    category: 'Streetwear & Oversized',
-    gender: 'Women',
-    directPrice: 720,
-    marketplacePrice: 1190,
-    marketplaceName: 'Urbanic Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1509631179647-0177331693ae?w=800'],
-    specs: [
-      { label: 'Material', value: 'Linen Viscose Blend' },
-      { label: 'Rise', value: 'High Elastic Waistband' }
-    ],
-    stockLeft: 22,
-    rating: 4.8,
-    reviewsCount: 205,
-    trendingScore: 96,
-    couponCode: 'URBANICDIRECT',
-    couponDiscount: 15,
-    officialUrl: 'https://urbanic.com/products/linen-ankle-trousers',
-    description: 'Breezy linen blend high-rise trousers designed for easy summer tailoring.'
-  },
-  {
-    id: 'souledstore-2',
-    name: 'Urban Flex Utility Cargo Trousers',
-    brand: 'Souled Store',
-    category: 'Streetwear & Oversized',
-    gender: 'Unisex',
-    directPrice: 749,
-    marketplacePrice: 1399,
-    marketplaceName: 'Souled Store Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1517445312882-bc9910d016b7?w=800'],
-    specs: [
-      { label: 'Fit', value: 'Relaxed Streetwear Fit' },
-      { label: 'Pockets', value: '6 Deep Utility Pockets' }
+      { label: 'Fabric', value: '100% European Flax Linen' },
+      { label: 'Fit', value: 'Relaxed Tailored Fit' }
     ],
     stockLeft: 14,
     rating: 4.8,
-    reviewsCount: 280,
+    reviewsCount: 110,
+    trendingScore: 95,
+    couponCode: 'RARBDIRECT',
+    couponDiscount: 10,
+    officialUrl: 'https://thehouseofrare.com/products/pleated-linen-trousers',
+    description: 'Tailored European linen trousers styled with double pleats and adjustable side tabs.'
+  },
+
+  // ==================== FOOTWEAR & ACCESSORIES ====================
+  {
+    id: 'footwear-01',
+    name: 'Handcrafted Genuine Leather Kolhapuri Chappals',
+    brand: 'Fizzy Goblet',
+    category: 'Footwear & Juttis',
+    gender: 'Women',
+    directPrice: 2299,
+    marketplacePrice: 3499,
+    marketplaceName: 'Fizzy Goblet Direct vs Nykaa Fashion',
+    images: ['https://images.unsplash.com/photo-1543163521-1bf539c55dd2?w=800'],
+    specs: [
+      { label: 'Upper', value: 'Hand-braided Vegetable Tanned Leather' },
+      { label: 'Sole', value: 'Double Cushion Memory Foam' }
+    ],
+    stockLeft: 16,
+    rating: 4.9,
+    reviewsCount: 190,
     trendingScore: 97,
-    couponCode: 'SOULEDDIRECT',
+    couponCode: 'FIZZYDIRECT',
     couponDiscount: 10,
-    officialUrl: 'https://thesouledstore.com/products/flex-cargo-trousers',
-    description: 'Comfortable stretch cotton utility cargo trousers with elastic drawstring waist.'
+    officialUrl: 'https://fizzygoblet.com/products/leather-kolhapuris',
+    description: 'Traditional Kolhapuri chappals handcrafted with double padding for all-day comfort.'
   },
   {
-    id: 'snitch-3',
-    name: 'Slim Fit Cotton Stretch Utility Trousers',
-    brand: 'Snitch',
-    category: 'Streetwear & Oversized',
-    gender: 'Men',
-    directPrice: 749,
-    marketplacePrice: 1399,
-    marketplaceName: 'Snitch Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1473966968600-fa801b869a1a?w=800'],
+    id: 'jewelry-01',
+    name: 'Antique Gold Temple Jewelry Choker Set',
+    brand: 'Senco Gold',
+    category: 'Jewelry & Accessories',
+    gender: 'Women',
+    directPrice: 4999,
+    marketplacePrice: 7999,
+    marketplaceName: 'Senco Direct vs Amazon/Myntra',
+    images: ['https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?w=800'],
     specs: [
-      { label: 'Cut', value: 'Modern Slim Tapered' },
-      { label: 'Fabric', value: '98% Cotton 2% Elastane' }
+      { label: 'Plating', value: '22kt Antique Gold Plated Brass' },
+      { label: 'Stones', value: 'Red Garnets & Freshwater Pearls' }
     ],
-    stockLeft: 15,
-    rating: 4.7,
-    reviewsCount: 164,
-    trendingScore: 95,
-    couponCode: 'SNITCHDIRECT10',
-    couponDiscount: 10,
-    officialUrl: 'https://snitch.co.in/products/slim-utility-trousers',
-    description: 'Clean modern slim fit stretch trousers engineered for urban daily wear.'
-  },
-  {
-    id: 'dailyobjects-1',
-    name: 'MagSafe Leatherette Armor Desk Stand & Wallet',
-    brand: 'DailyObjects',
-    category: 'Tech & EDC',
-    gender: 'Unisex',
-    directPrice: 1199,
-    marketplacePrice: 1699,
-    marketplaceName: 'DailyObjects Direct vs Marketplace',
-    images: ['https://images.unsplash.com/photo-1601784551446-20c9e07cdbdb?w=800'],
-    specs: [
-      { label: 'Compatibility', value: 'MagSafe iPhone 12-16 Series' },
-      { label: 'Material', value: 'Vegan Leatherette' }
-    ],
-    stockLeft: 28,
-    rating: 4.8,
-    reviewsCount: 130,
-    trendingScore: 95,
-    couponCode: 'DAILYOBJECTSDIRECT',
-    couponDiscount: 10,
-    officialUrl: 'https://dailyobjects.com/products/magsafe-wallet',
-    description: 'Modular MagSafe phone stand and card wallet with dual viewing angles.'
+    stockLeft: 10,
+    rating: 4.9,
+    reviewsCount: 135,
+    trendingScore: 98,
+    couponCode: 'SENCODIRECT',
+    couponDiscount: 12,
+    officialUrl: 'https://sencogoldanddiamonds.com/products/temple-choker-set',
+    description: 'Exquisite temple design choker set sculpted with Goddess Lakshmi motifs and red stone drops.'
   }
 ];
+
+const DEPRECATED_DEMO_PRODUCTS: Product[] = [];
 
 let memoryProductsCache: Product[] = [];
 let memoryBrandsCache: Record<string, BrandSummary> = {};
 
 export function safeNumber(val: any, fallback = 0): number {
-  if (val === null || val === undefined) return fallback;
+  if (val === null || val === undefined || val === '') return fallback;
   if (typeof val === 'number') {
-    return isNaN(val) || !isFinite(val) ? fallback : val;
+    if (isNaN(val) || !isFinite(val)) return fallback;
+    if (val > 0 && val < 50) return Math.round(val * 1000);
+    return val;
+  }
+  if (typeof val === 'object' && val !== null) {
+    if (val.amount !== undefined) return safeNumber(val.amount, fallback);
+    if (val.price !== undefined) return safeNumber(val.price, fallback);
+    if (val.direct_price !== undefined) return safeNumber(val.direct_price, fallback);
+    if (val.directPrice !== undefined) return safeNumber(val.directPrice, fallback);
   }
   if (typeof val === 'string') {
-    const cleaned = val.replace(/[^0-9.]/g, '');
+    const cleaned = val.replace(/,/g, '').replace(/[^0-9.]/g, '');
     if (!cleaned) return fallback;
     const parsed = parseFloat(cleaned);
-    return isNaN(parsed) || !isFinite(parsed) ? fallback : parsed;
+    if (isNaN(parsed) || !isFinite(parsed)) return fallback;
+    if (parsed > 0 && parsed < 50) return Math.round(parsed * 1000);
+    return parsed;
   }
   return fallback;
 }
@@ -670,14 +661,18 @@ export function mapDocToProduct(d: { id: string; data: () => any }): Product {
   const rawCategory = data.product_type || data.category_name || data.category || 'Streetwear & Apparel';
   const category = String(rawCategory).trim() || 'Streetwear & Apparel';
 
-  const directPrice = safeNumber(data.pricing?.direct_price) ||
-                      safeNumber(data.directPrice) ||
-                      safeNumber(data.price) ||
-                      1299;
+  let directPrice = safeNumber(data.pricing?.direct_price) ||
+                    safeNumber(data.directPrice) ||
+                    safeNumber(data.price) ||
+                    safeNumber(data.variants?.[0]?.price) ||
+                    safeNumber(data.price_min) ||
+                    safeNumber(data.price_max) ||
+                    1299;
 
-  const rawCompareAt = safeNumber(data.pricing?.marketplace_price) ||
-                       safeNumber(data.marketplacePrice) ||
-                       safeNumber(data.compare_at_price);
+  let rawCompareAt = safeNumber(data.pricing?.marketplace_price) ||
+                     safeNumber(data.marketplacePrice) ||
+                     safeNumber(data.compare_at_price) ||
+                     safeNumber(data.variants?.[0]?.compare_at_price);
 
   const marketplacePrice = rawCompareAt > directPrice ? rawCompareAt : Math.round(directPrice * 1.35);
 
@@ -817,16 +812,18 @@ export function mapShopifyProductToProduct(sp: any, docId?: string): Product {
   const rawCategory = sp.product_type || sp.category || sp.category_name || (Array.isArray(sp.tags) ? sp.tags.join(' ') : sp.tags) || 'Apparel & Fashion';
   const category = String(rawCategory).trim() || 'Apparel & Fashion';
   
-  const directPrice = safeNumber(sp.directPrice) ||
-                      safeNumber(sp.price) ||
-                      safeNumber(sp.pricing?.direct_price) ||
-                      safeNumber(sp.variants?.[0]?.price) ||
-                      1299;
+  let directPrice = safeNumber(sp.directPrice) ||
+                    safeNumber(sp.price) ||
+                    safeNumber(sp.pricing?.direct_price) ||
+                    safeNumber(sp.variants?.[0]?.price) ||
+                    safeNumber(sp.price_min) ||
+                    safeNumber(sp.price_max) ||
+                    1299;
 
-  const rawCompareAt = safeNumber(sp.compare_at_price) ||
-                       safeNumber(sp.marketplacePrice) ||
-                       safeNumber(sp.pricing?.marketplace_price) ||
-                       safeNumber(sp.variants?.[0]?.compare_at_price);
+  let rawCompareAt = safeNumber(sp.compare_at_price) ||
+                     safeNumber(sp.marketplacePrice) ||
+                     safeNumber(sp.pricing?.marketplace_price) ||
+                     safeNumber(sp.variants?.[0]?.compare_at_price);
 
   const marketplacePrice = rawCompareAt > directPrice ? rawCompareAt : Math.round(directPrice * 1.35);
 
@@ -911,47 +908,31 @@ export async function purgeDemoDataFromDb(): Promise<number> {
   return deleted;
 }
 
+/**
+ * Bulk seeds all categories (Sarees, Kurtis, Ethnic, Western, Streetwear, Footwear, Jewelry, etc.)
+ * directly into Firestore using throttled sequential batches.
+ */
+export async function seedAllCategoriesToFirestore(
+  onProgress?: (committed: number, total: number) => void
+): Promise<{ success: boolean; totalCount: number }> {
+  try {
+    console.log(`Starting bulk database seed of ${INITIAL_D2C_PRODUCTS.length} multi-category catalog items...`);
+    await saveProductsBulkToDb(INITIAL_D2C_PRODUCTS);
+    if (onProgress) onProgress(INITIAL_D2C_PRODUCTS.length, INITIAL_D2C_PRODUCTS.length);
+    return { success: true, totalCount: INITIAL_D2C_PRODUCTS.length };
+  } catch (err) {
+    console.warn('Notice in seedAllCategoriesToFirestore:', err);
+    return { success: false, totalCount: 0 };
+  }
+}
+
 // 1. Fetch real-time products from Firestore
 export async function ensureProductsSeededToFirestore(): Promise<void> {
   try {
     const qSnapshot = await getDocs(query(collection(db, SHOPIFY_PRODUCTS_COLLECTION), limit(1)));
     if (qSnapshot.empty) {
-      console.log('Seeding initial products to Shopify products collection (shopify_products)...');
-      const ops: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
-      INITIAL_D2C_PRODUCTS.forEach((p) => {
-        const docId = sanitizeDocId(`sp_${p.id}`);
-        const ref = doc(db, SHOPIFY_PRODUCTS_COLLECTION, docId);
-        const docData = sanitizeForFirestore({
-          id: p.id,
-          title: p.name,
-          name: p.name,
-          vendor: p.brand,
-          brand: p.brand,
-          brand_name: p.brand,
-          product_type: p.category,
-          category: p.category,
-          category_name: p.category,
-          gender: p.gender || 'Unisex',
-          price: p.directPrice,
-          directPrice: p.directPrice,
-          compare_at_price: p.marketplacePrice,
-          marketplacePrice: p.marketplacePrice,
-          marketplaceName: p.marketplaceName,
-          images: p.images,
-          specs: p.specs,
-          stockLeft: p.stockLeft,
-          rating: p.rating,
-          reviewsCount: p.reviewsCount,
-          trendingScore: p.trendingScore,
-          couponCode: p.couponCode,
-          couponDiscount: p.couponDiscount,
-          officialUrl: p.officialUrl,
-          description: p.description,
-          updated_at: new Date().toISOString()
-        });
-        ops.push((batch) => batch.set(ref, docData));
-      });
-      await executeBatchedOperations(ops);
+      console.log('Database empty. Seeding multi-category products catalog to Firestore...');
+      await seedAllCategoriesToFirestore();
     }
   } catch (err) {
     console.warn('Notice seeding initial products to Shopify products collection:', err);

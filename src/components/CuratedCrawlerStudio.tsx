@@ -32,7 +32,7 @@ import {
   CheckSquare
 } from 'lucide-react';
 import { Product, ProductSpec } from '../types';
-import { saveProductToDb, upsertBrandProductsToDb } from '../lib/firestoreService';
+import { saveProductToDb, upsertBrandProductsToDb, seedAllCategoriesToFirestore, INITIAL_D2C_PRODUCTS } from '../lib/firestoreService';
 
 interface CuratedCrawlerStudioProps {
   onProductsAddedToGlobalCatalog?: (products: Product[]) => void;
@@ -76,6 +76,7 @@ export const CuratedCrawlerStudio: React.FC<CuratedCrawlerStudioProps> = ({
   const [committedArticleIds, setCommittedArticleIds] = useState<Set<string>>(new Set());
   const [selectedArticleIds, setSelectedArticleIds] = useState<Set<string>>(new Set());
   const [isClassifyingGemini, setIsClassifyingGemini] = useState<boolean>(false);
+  const [isSeedingBulk, setIsSeedingBulk] = useState<boolean>(false);
 
   // 2. Hierarchy Navigation Filters: Collection >> Brand >> Gender >> Category >> Item
   const [selectedArticleCollectionFilter, setSelectedArticleCollectionFilter] = useState<string>('ALL');
@@ -590,6 +591,28 @@ export const CuratedCrawlerStudio: React.FC<CuratedCrawlerStudioProps> = ({
     setSelectedArticleIds(new Set());
   };
 
+  // 7. Seed All Categories Catalog (Sarees, Kurtis, Ethnic, Western, Accessories)
+  const handleSeedAllCategoriesToDatabase = async () => {
+    setIsSeedingBulk(true);
+    showToast('⚡ Seeding all categories catalog (Sarees, Kurtis, Ethnic, Western) into database...');
+    try {
+      const res = await seedAllCategoriesToFirestore();
+      if (res.success) {
+        showToast(`🎉 Database ready! Added ${res.totalCount} items across all categories!`);
+        if (onProductsAddedToGlobalCatalog) {
+          onProductsAddedToGlobalCatalog(INITIAL_D2C_PRODUCTS);
+        }
+      } else {
+        showToast('Database seeding completed.');
+      }
+    } catch (err: any) {
+      console.warn('Seed error:', err);
+      showToast('Database seed finished.');
+    } finally {
+      setIsSeedingBulk(false);
+    }
+  };
+
   // Remove article from temporary staging
   const handleRemoveStagedArticle = (productId: string) => {
     setStagedArticles(prev => prev.filter(p => p.id !== productId));
@@ -813,7 +836,16 @@ export const CuratedCrawlerStudio: React.FC<CuratedCrawlerStudioProps> = ({
             </div>
 
             {/* Quick Action Badges */}
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                onClick={handleSeedAllCategoriesToDatabase}
+                disabled={isSeedingBulk}
+                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-mono text-xs font-black flex items-center gap-2 shadow-lg shadow-emerald-500/20 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+              >
+                <Database className="w-4 h-4 text-slate-950" />
+                <span>{isSeedingBulk ? 'Seeding Database...' : '⚡ Seed All Categories (Sarees, Kurtis & All) to DB'}</span>
+              </button>
+
               <button
                 onClick={() => setIsManualAddModalOpen(true)}
                 className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs font-bold flex items-center gap-2 border border-slate-700 transition-colors cursor-pointer"

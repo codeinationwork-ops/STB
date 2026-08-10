@@ -1,8 +1,31 @@
 import { Product } from '../types';
 
-export const FEMALE_CLOTHING_REGEX = /\b(women|womens|women's|female|ladies|lady|girl|girls|woman|woman's|dress|dresses|skirt|skirts|saree|sari|sarees|saris|lehenga|lehengas|choli|dupatta|dupattas|bra|bras|bralette|crop-top|crop top|kurti|kurtis|gown|gowns|bikini|monokini|frock|frocks|blouse|blouses|heels|handbag|handbags|purse|purses|lingerie|kaftan|kaftans|chikankari|palazzo|palazzos|salwar|chaniya|wedges|stilettos|clutch|clutches|corset|corsets|camisole|cami|midi|maxi|maxis|bodycon|nighty|nightgown|babydoll|leggings|jeggings|shrug|shrugs|earrings|earring|necklace|lipstick|scrunchie|scrunchies|anarkali|sharara|gharara|halter|off-shoulder|tube top|peplum|push-up|stockings|hairband|tiara|jumpsuit|makeup)\b/i;
+export const FEMALE_CLOTHING_REGEX = /\b(women|womens|women's|female|females|ladies|lady|girl|girls|woman|woman's|dress|dresses|skirt|skirts|saree|saris|sarees|sari|lehenga|lehengas|choli|dupatta|dupattas|bra|bras|bralette|crop-top|crop top|cropped top|kurti|kurtis|gown|gowns|bikini|monokini|frock|frocks|blouse|blouses|heels|handbag|handbags|purse|purses|lingerie|kaftan|kaftans|chikankari|palazzo|palazzos|salwar|chaniya|wedges|stilettos|clutch|clutches|corset|corsets|camisole|cami|midi|maxi|maxis|bodycon|nighty|nightgown|babydoll|leggings|jeggings|shrug|shrugs|earrings|earring|necklace|lipstick|scrunchie|scrunchies|anarkali|sharara|gharara|halter|off-shoulder|tube top|peplum|push-up|stockings|hairband|tiara|jumpsuit|makeup|chanderi|kanjeevaram|banarasi|lucknowi|gottapatti|zardosi|choker|jhumka|jhumkas|mangalsutra|jutti|juttis|kolhapuri|kolhapuris)\b/i;
 
-export const MALE_CLOTHING_REGEX = /\b(men|mens|men's|male|guys|guy|gents|gentleman|gentlemen|boy|boys|man|sherwani|boxer|boxers|trunks|briefs|tuxedo|chinos|kurta men|men kurta)\b/i;
+export const MALE_CLOTHING_REGEX = /\b(men|mens|men's|male|males|guys|guy|gents|gentleman|gentlemen|boy|boys|man|sherwani|boxer|boxers|trunks|briefs|tuxedo|chinos|kurta men|men kurta)\b/i;
+
+/**
+ * Extracts normalized gender tag ('Men' | 'Women' | 'Unisex' | '') from product metadata or specs.
+ */
+export function extractGenderFromProduct(p: any): string {
+  if (!p) return '';
+  if (p.gender && typeof p.gender === 'string') {
+    const g = p.gender.trim().toLowerCase();
+    if (g === 'men' || g === 'male' || g === 'gents' || g === 'boy') return 'Men';
+    if (g === 'women' || g === 'female' || g === 'ladies' || g === 'girl') return 'Women';
+    if (g === 'unisex') return 'Unisex';
+  }
+  if (Array.isArray(p.specs)) {
+    const genderSpec = p.specs.find((s: any) => s && s.label && String(s.label).toLowerCase().includes('gender'));
+    if (genderSpec && genderSpec.value) {
+      const g = String(genderSpec.value).trim().toLowerCase();
+      if (g === 'men' || g === 'male' || g === 'gents' || g === 'boy') return 'Men';
+      if (g === 'women' || g === 'female' || g === 'ladies' || g === 'girl') return 'Women';
+      if (g === 'unisex') return 'Unisex';
+    }
+  }
+  return '';
+}
 
 /**
  * Classifies gender from product text (title, category, description, specs).
@@ -25,33 +48,73 @@ export function classifyGenderFromText(text: string, currentGender?: string): 'M
 
 /**
  * Strictly determines if a product belongs in the Men section.
- * GUARANTEES that female clothing/garments or female-targeted products are NEVER returned.
+ * ABSOLUTELY GUARANTEES that female clothing/garments or female-targeted products are NEVER returned.
  */
 export function isMaleProduct(p: Partial<Product> & { name?: string; title?: string; category?: string; description?: string; specs?: any[]; gender?: string }): boolean {
   if (!p) return false;
+
+  const explicitGender = extractGenderFromProduct(p);
+
+  // 1. HARD EXCLUDE: Any explicit 'Women' gender tag
+  if (explicitGender === 'Women') {
+    return false;
+  }
+
   const name = p.name || (p as any).title || '';
   const category = p.category || '';
   const description = p.description || '';
   const specsText = Array.isArray(p.specs) ? p.specs.map((s) => `${s.label} ${s.value}`).join(' ') : '';
   const text = `${name} ${category} ${description} ${specsText}`.toLowerCase();
 
-  // 1. HARD EXCLUDE: Any female specific keywords or explicitly Women gender
-  if (p.gender === 'Women' || FEMALE_CLOTHING_REGEX.test(text)) {
+  // 2. HARD EXCLUDE: Any female-specific clothing terms in text
+  if (FEMALE_CLOTHING_REGEX.test(text)) {
     return false;
   }
 
-  // 2. If explicitly tagged as Men
-  if (p.gender === 'Men') {
+  // 3. HARD EXCLUDE: Female-specific category names
+  const catLower = category.toLowerCase();
+  const femaleCategories = [
+    'sarees & handloom', 'kurtis & ethnic suits', 'lehenga & festive', 
+    'footwear & juttis', 'jewelry & accessories', 'dresses & western',
+    'saree', 'sarees', 'kurti', 'kurtis', 'lehenga', 'lehengas', 'jewelry', 'jutti', 'juttis', 'dupatta'
+  ];
+  if (femaleCategories.some((fc) => catLower.includes(fc))) {
+    return false;
+  }
+
+  // 4. HARD EXCLUDE: Female-focused brand names
+  const brandLower = (p.brand || '').toLowerCase();
+  const femaleBrands = [
+    'weaverstory', 'craftsvilla', 'biba', 'w for woman', 'ada chikankari', 
+    'libas', 'kalki fashion', 'house of indya', 'fizzy goblet', 'senco gold'
+  ];
+  if (femaleBrands.includes(brandLower)) {
+    return false;
+  }
+
+  // 5. If explicitly tagged as Men
+  if (explicitGender === 'Men') {
     return true;
   }
 
-  // 3. Explicit Male keywords match in text
+  // 6. Explicit Male keywords match in text
   if (MALE_CLOTHING_REGEX.test(text)) {
     return true;
   }
 
-  // 4. Return true if no female terms are present (default non-female item to Men section)
-  return true;
+  // 7. Explicitly Unisex items (e.g. streetwear hoodies, sneakers, tech)
+  if (explicitGender === 'Unisex') {
+    return true;
+  }
+
+  // 8. General menswear item check
+  const isMenswearTerm = /\b(hoodie|hoodies|tshirt|tshirts|t-shirt|t-shirts|shirt|shirts|trouser|trousers|jogger|joggers|cargo|cargos|jacket|jackets|blazer|blazers|coat|coats|jeans|sweatshirt|sweatshirts|sneaker|sneakers|suit|chinos|short|shorts|coffee|tech|wallet)\b/i.test(text);
+
+  if (isMenswearTerm) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -59,6 +122,14 @@ export function isMaleProduct(p: Partial<Product> & { name?: string; title?: str
  */
 export function isFemaleProduct(p: Partial<Product> & { name?: string; title?: string; category?: string; description?: string; specs?: any[]; gender?: string }): boolean {
   if (!p) return false;
+
+  const explicitGender = extractGenderFromProduct(p);
+
+  // 1. HARD EXCLUDE: Any explicit 'Men' tag (without female override)
+  if (explicitGender === 'Men') {
+    return false;
+  }
+
   const name = p.name || (p as any).title || '';
   const category = p.category || '';
   const description = p.description || '';
@@ -68,18 +139,44 @@ export function isFemaleProduct(p: Partial<Product> & { name?: string; title?: s
   const isMale = MALE_CLOTHING_REGEX.test(text);
   const isFemale = FEMALE_CLOTHING_REGEX.test(text);
 
-  // 1. HARD EXCLUDE: Strictly male terms (without female terms) or explicitly Men gender
-  if (p.gender === 'Men' || (isMale && !isFemale)) {
+  // Hard exclude male clothing terms unless explicit female term present
+  if (isMale && !isFemale) {
     return false;
   }
 
   // 2. If explicitly tagged as Women
-  if (p.gender === 'Women') {
+  if (explicitGender === 'Women') {
     return true;
   }
 
   // 3. Explicit Female keywords match
   if (isFemale) {
+    return true;
+  }
+
+  // 4. Female category check
+  const catLower = category.toLowerCase();
+  const femaleCategories = [
+    'sarees & handloom', 'kurtis & ethnic suits', 'lehenga & festive', 
+    'footwear & juttis', 'jewelry & accessories', 'dresses & western',
+    'saree', 'sarees', 'kurti', 'kurtis', 'lehenga', 'lehengas', 'jewelry', 'jutti', 'juttis', 'dupatta'
+  ];
+  if (femaleCategories.some((fc) => catLower.includes(fc))) {
+    return true;
+  }
+
+  // 5. Female brand check
+  const brandLower = (p.brand || '').toLowerCase();
+  const femaleBrands = [
+    'weaverstory', 'craftsvilla', 'biba', 'w for woman', 'ada chikankari', 
+    'libas', 'kalki fashion', 'house of indya', 'fizzy goblet', 'senco gold', 'urbanic'
+  ];
+  if (femaleBrands.includes(brandLower)) {
+    return true;
+  }
+
+  // 6. Explicitly Unisex items
+  if (explicitGender === 'Unisex') {
     return true;
   }
 

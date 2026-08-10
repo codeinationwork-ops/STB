@@ -1447,20 +1447,6 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
 
       </main>
 
-      {/* Home Page Footer */}
-      <footer className="relative z-10 py-6 px-4 border-t border-slate-200/80 bg-white/80 backdrop-blur-md text-slate-500 text-xs font-mono mt-12">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
-          <div className="flex items-center gap-2 font-bold text-slate-800">
-            <span>ShopScoper a product by DEVIONYX (OPC) PRIVATE LIMITED</span>
-          </div>
-          <div className="flex items-center gap-4 text-slate-400 text-[11px]">
-            <span>© {new Date().getFullYear()} All rights reserved.</span>
-            <span>•</span>
-            <span>Direct Brand Checkout</span>
-          </div>
-        </div>
-      </footer>
-
 
 
       {/* Small Compact Floating Price Budget Trigger Tab (Pinned to Left Edge) - ONLY on Products Page */}
