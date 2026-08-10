@@ -17,31 +17,24 @@ import { AdminLoginPage } from './components/AdminLoginPage';
 import { AdminDashboard } from './components/AdminDashboard';
 import { Forbidden403 } from './components/Forbidden403';
 import { GptTryOnStudio } from './components/GptTryOnStudio';
-import { TryOnPaymentModal } from './components/TryOnPaymentModal';
 
 import {
+  INITIAL_PRODUCTS,
   CATEGORIES,
-  DEFAULT_ADDRESSES,
+  MOCK_ADDRESSES,
   INITIAL_COMMUNITY_SAVINGS,
   SAVINGS_CHART_DATA
-} from './constants';
+} from './data/mockData';
 
 import { Product, UserAddress, UserSession } from './types';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from './lib/firebase';
 import {
   getOrSeedProducts,
-  getProductsFromFirestore,
-  fetchProductBatch,
-  shuffleArray,
-  interleaveByBrand,
-  INITIAL_D2C_PRODUCTS,
   subscribeWishlist,
   toggleWishlistInDb,
   saveOrderToDb,
-  saveUserProfileToDb,
-  fetchUserTryOnCredits,
-  saveUserTryOnCredits
+  saveUserProfileToDb
 } from './lib/firestoreService';
 import { preloadImageUrls } from './lib/imageUtils';
 
@@ -183,62 +176,29 @@ export default function App() {
 
   // State Initialization
   const [products, setProducts] = useState<Product[]>([]);
-  const [selectedGender, setSelectedGender] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [wishlistIds, setWishlistIds] = useState<string[]>([]);
-  const [addresses, setAddresses] = useState<UserAddress[]>(DEFAULT_ADDRESSES);
-  const [defaultAddress, setDefaultAddress] = useState<UserAddress>(DEFAULT_ADDRESSES[0]);
+  const [addresses, setAddresses] = useState<UserAddress[]>(MOCK_ADDRESSES);
+  const [defaultAddress, setDefaultAddress] = useState<UserAddress>(MOCK_ADDRESSES[0]);
 
-  // Cursor Pagination & Infinite Shuffled Loading State
-  const [lastCursor, setLastCursor] = useState<any>(null);
-  const [hasMoreProducts, setHasMoreProducts] = useState<boolean>(true);
-
-  // Load complete product catalog from Firestore, interleave by brand across all 29+ stores
-  const loadCompleteCatalog = async (gender?: string | null) => {
-    setIsLoading(true);
-    try {
-      const data = await getProductsFromFirestore(gender || undefined);
-      if (data && data.length > 0) {
-        const interleaved = interleaveByBrand(data);
-        setProducts(interleaved);
-        if (interleaved.length > 0) {
-          setActiveExpressProduct(interleaved[0]);
-          const urlsToPreload = interleaved.flatMap((p) => p.images || []).filter(Boolean).slice(0, 50);
-          preloadImageUrls(urlsToPreload);
-        }
-      }
-    } catch (error) {
-      console.error("Firestore fetch error loading complete catalog:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Gender selection handler with full catalog loading
-  const handleSelectGender = async (gender: string) => {
-    setSelectedGender(gender);
-    await loadCompleteCatalog(gender);
-  };
-
-  // Load complete catalog on mount
+  // Load / Seed Firestore Products
   useEffect(() => {
-    loadCompleteCatalog(selectedGender);
+    getOrSeedProducts([]).then((loadedProducts) => {
+      setProducts(loadedProducts);
+      if (loadedProducts.length > 0) {
+        setActiveExpressProduct(loadedProducts[0]);
+      }
+      // Preload images for instant switching & lightning fast action execution!
+      const urlsToPreload = loadedProducts.flatMap((p) => p.images || []).filter(Boolean);
+      preloadImageUrls(urlsToPreload);
+    });
   }, []);
 
-  // Subscribe to wishlist changes & Try-On credits for the specific user
-  const [tryOnCredits, setTryOnCredits] = useState<number>(1);
-  const [isTryOnPaymentOpen, setIsTryOnPaymentOpen] = useState<boolean>(false);
-  const [pendingTryOnGarment, setPendingTryOnGarment] = useState<{ product?: Product | null; imageUrl?: string | null }>({});
-
+  // Subscribe to wishlist changes for the specific user
   useEffect(() => {
     if (!effectiveUserId) return;
     const unsubscribe = subscribeWishlist(effectiveUserId, (ids) => {
       setWishlistIds(ids);
-    });
-
-    fetchUserTryOnCredits(effectiveUserId).then((credits) => {
-      setTryOnCredits(credits);
     });
 
     return () => unsubscribe();
@@ -258,28 +218,6 @@ export default function App() {
   const handleOpenGptTryOn = (product?: Product | null, imageUrl?: string | null) => {
     setGptTryOnGarment({ product, imageUrl });
     setIsGptTryOnOpen(true);
-  };
-
-  const handleTryOnAttempt = (product?: Product | null, imageUrl?: string | null) => {
-    if (tryOnCredits > 0) {
-      const nextCredits = tryOnCredits - 1;
-      setTryOnCredits(nextCredits);
-      saveUserTryOnCredits(effectiveUserId, nextCredits);
-      handleOpenGptTryOn(product, imageUrl);
-    } else {
-      setPendingTryOnGarment({ product, imageUrl });
-      setIsTryOnPaymentOpen(true);
-    }
-  };
-
-  const handleTryOnPaymentSuccess = (addedCredits: number) => {
-    const newTotal = tryOnCredits + addedCredits;
-    // Save new total, then consume 1 for immediate pending launch
-    const finalCredits = Math.max(0, newTotal - 1);
-    setTryOnCredits(finalCredits);
-    saveUserTryOnCredits(effectiveUserId, finalCredits);
-    setIsTryOnPaymentOpen(false);
-    handleOpenGptTryOn(pendingTryOnGarment.product, pendingTryOnGarment.imageUrl);
   };
 
   const handleProductsAddedFromCrawler = (newProducts: Product[]) => {
@@ -309,7 +247,12 @@ export default function App() {
 
   // Handlers
   const handleToggleWishlist = (product: Product) => {
-    const isWishlisted = wishlistIds.includes(product.id);
+    const isWishlisted = wishlistIds.some((id) => String(id) === String(product.id));
+    setWishlistIds((prev) =>
+      isWishlisted
+        ? prev.filter((i) => String(i) !== String(product.id))
+        : [...prev, product.id]
+    );
     toggleWishlistInDb(effectiveUserId, product.id, isWishlisted);
   };
 
@@ -343,7 +286,9 @@ export default function App() {
   };
 
   const wishlistProducts = useMemo(() => {
-    return products.filter((p) => wishlistIds.includes(p.id));
+    if (!wishlistIds || wishlistIds.length === 0) return [];
+    const idSet = new Set(wishlistIds.map((id) => String(id)));
+    return products.filter((p) => idSet.has(String(p.id)));
   }, [products, wishlistIds]);
 
   // --------------------------------------------------------------------------
@@ -354,9 +299,11 @@ export default function App() {
       <LandingPage
         onNavigateLogin={() => navigateTo('login')}
         onNavigateExplore={() => navigateTo('explore')}
+        onNavigateAdmin={() => navigateTo('admin')}
         isAuthenticated={!!currentUser}
         userName={currentUser?.name}
         onLogout={handleLogout}
+        onProductsAddedToGlobalCatalog={(newProds) => setProducts(prev => [...newProds, ...prev])}
       />
     );
   }
@@ -439,9 +386,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 selection:bg-red-600 selection:text-white font-sans antialiased relative overflow-x-hidden">
-      {isLoading && (
-        <div className="fixed top-0 left-0 right-0 z-50 h-1 bg-gradient-to-r from-purple-600 via-pink-500 to-amber-400 animate-pulse" />
-      )}
       
       {/* Dynamic Background Mesh Gradients */}
       <div className="fixed inset-0 pointer-events-none z-0">
@@ -454,10 +398,9 @@ export default function App() {
         products={products}
         wishlistIds={wishlistIds}
         defaultAddress={defaultAddress}
-        wishlistCount={wishlistIds.length}
+        wishlistCount={wishlistProducts.length}
         totalSaved={totalSaved}
         currentUser={currentUser}
-        tryOnCredits={tryOnCredits}
         onLogout={handleLogout}
         onNavigateAdmin={() => navigateTo('admin')}
         onToggleWishlist={handleToggleWishlist}
@@ -465,8 +408,7 @@ export default function App() {
         onQuickView={handleOpenQuickView}
         onOpenWishlist={() => setIsWishlistOpen(true)}
         onOpenAddressVault={() => setIsAddressVaultOpen(true)}
-        onOpenGptTryOn={handleTryOnAttempt}
-        onSelectGender={handleSelectGender}
+        onOpenGptTryOn={handleOpenGptTryOn}
       />
 
       {/* Slide-Over Drawers & Modals */}
@@ -475,12 +417,6 @@ export default function App() {
         onClose={() => setIsGptTryOnOpen(false)}
         garmentProduct={gptTryOnGarment.product}
         garmentImageUrl={gptTryOnGarment.imageUrl}
-      />
-      <TryOnPaymentModal
-        isOpen={isTryOnPaymentOpen}
-        onClose={() => setIsTryOnPaymentOpen(false)}
-        onPaymentSuccess={handleTryOnPaymentSuccess}
-        productName={pendingTryOnGarment.product?.name}
       />
       <ExpressDrawer
         isOpen={isExpressDrawerOpen}
@@ -495,12 +431,14 @@ export default function App() {
         isOpen={isWishlistOpen}
         onClose={() => setIsWishlistOpen(false)}
         wishlistProducts={wishlistProducts}
-        tryOnCredits={tryOnCredits}
-        onRemoveFromWishlist={(id) => setWishlistIds((prev) => prev.filter((i) => i !== id))}
+        onRemoveFromWishlist={(id) => {
+          setWishlistIds((prev) => prev.filter((i) => String(i) !== String(id)));
+          toggleWishlistInDb(effectiveUserId, id, true);
+        }}
         onExpressBuy={handleOpenExpressBuy}
         onTryOn={(p) => {
           setIsWishlistOpen(false);
-          handleTryOnAttempt(p);
+          handleOpenGptTryOn(p);
         }}
       />
 
@@ -516,15 +454,14 @@ export default function App() {
         product={activeQuickViewProduct}
         isOpen={isQuickViewOpen}
         onClose={() => setIsQuickViewOpen(false)}
-        isWishlisted={activeQuickViewProduct ? wishlistIds.includes(activeQuickViewProduct.id) : false}
+        isWishlisted={activeQuickViewProduct ? wishlistIds.some((id) => String(id) === String(activeQuickViewProduct.id)) : false}
         onToggleWishlist={handleToggleWishlist}
         onExpressBuy={handleOpenExpressBuy}
-        tryOnCredits={tryOnCredits}
         onTryOn={(p) => {
           setIsQuickViewOpen(false);
-          handleTryOnAttempt(p);
+          handleOpenGptTryOn(p);
         }}
-        wishlistCount={wishlistIds.length}
+        wishlistCount={wishlistProducts.length}
         onOpenSearch={() => {
           setIsQuickViewOpen(false);
           setIsSearchOpen(true);

@@ -3,10 +3,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import { SlidersHorizontal, ArrowUpDown, Filter, Sparkles, Grid, LayoutGrid, Check, RefreshCw, Bot, ShieldCheck } from 'lucide-react';
 import { Product } from '../types';
 import { ProductCard } from './ProductCard';
-import { safeNumber, isMaleProduct, isFemaleProduct } from '../lib/firestoreService';
+import { safeNumber } from '../lib/firestoreService';
 import { matchesCategoryFilter, MALE_CATEGORIES, FEMALE_CATEGORIES } from './GeminiSearchLanding';
 import { verifyProductsWithGeminiAI, getAICachedVerification } from '../lib/geminiCategoryVerifier';
-import { strictKeywordMatch } from '../lib/strictSearch';
+import { strictKeywordMatch, isMaleProduct, isFemaleProduct } from '../lib/strictSearch';
 
 interface ProductGridProps {
   products: Product[];
@@ -40,7 +40,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({
   const [appliedMaxPrice, setAppliedMaxPrice] = useState<number>(25000);
   const [isPriceFilterApplied, setIsPriceFilterApplied] = useState<boolean>(false);
   const [isCompactLayout, setIsCompactLayout] = useState<boolean>(false);
-  const [selectedGender, setSelectedGender] = useState<'All' | 'Men' | 'Women' | 'Unisex'>('All');
+  const [selectedGender, setSelectedGender] = useState<'All' | 'Men' | 'Women'>('All');
 
   // Dynamic Min & Max Prices calculated from Shopify / Catalog Products
   const { minCatalogPrice, maxCatalogPrice } = useMemo(() => {
@@ -74,7 +74,6 @@ export const ProductGrid: React.FC<ProductGridProps> = ({
     const relevantProducts = products.filter((p) => {
       if (selectedGender === 'Men') return isMaleProduct(p);
       if (selectedGender === 'Women') return isFemaleProduct(p);
-      if (selectedGender === 'Unisex') return (p.gender || '').toLowerCase() === 'unisex';
       return true;
     });
 
@@ -100,13 +99,11 @@ export const ProductGrid: React.FC<ProductGridProps> = ({
           if (!isMaleProduct(p)) return false;
         } else if (selectedGender === 'Women') {
           if (!isFemaleProduct(p)) return false;
-        } else if (selectedGender === 'Unisex') {
-          if ((p.gender || '').toLowerCase() !== 'unisex') return false;
         }
       }
       // Strict Search Query Filter (Exact Word Boundaries & Tokenizer)
       if (searchQuery.trim() !== '') {
-        const extraText = `${p.brand || ''} ${p.category || ''} ${(p.specs || []).map(s => `${s?.label || ''} ${s?.value || ''}`).join(' ')}`;
+        const extraText = `${p.brand} ${p.category} ${p.specs.map(s => `${s.label} ${s.value}`).join(' ')}`;
         if (!strictKeywordMatch(p.name, p.description || '', searchQuery, extraText)) {
           return false;
         }
@@ -172,7 +169,7 @@ export const ProductGrid: React.FC<ProductGridProps> = ({
               {/* Gender Filter Tabs */}
               <div className="flex items-center gap-1 bg-[#18181B] border border-[#27272A] p-1 rounded-xl">
                 <span className="text-[10px] font-mono font-bold text-zinc-500 uppercase px-2">Audience:</span>
-                {(['All', 'Men', 'Women', 'Unisex'] as const).map((gender) => (
+                {(['All', 'Men', 'Women'] as const).map((gender) => (
                   <button
                     key={gender}
                     onClick={() => setSelectedGender(gender)}

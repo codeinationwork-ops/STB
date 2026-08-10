@@ -18,6 +18,7 @@ import {
 import { BrandLogo } from './BrandLogo';
 import { CrawlerPage } from './CrawlerPage';
 import { ShopifyStoresPage } from './ShopifyStoresPage';
+import { CuratedCrawlerStudio } from './CuratedCrawlerStudio';
 import { Product, UserSession } from '../types';
 
 interface AdminDashboardProps {
@@ -25,15 +26,17 @@ interface AdminDashboardProps {
   onLogout: () => void;
   onNavigateHome: () => void;
   onProductsAddedToGlobalCatalog: (products: Product[]) => void;
+  initialTab?: 'crawler' | 'shopify' | 'curated';
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   currentUser,
   onLogout,
   onNavigateHome,
-  onProductsAddedToGlobalCatalog
+  onProductsAddedToGlobalCatalog,
+  initialTab = 'curated'
 }) => {
-  const [activeTab, setActiveTab] = useState<'crawler' | 'shopify'>('crawler');
+  const [activeTab, setActiveTab] = useState<'crawler' | 'shopify' | 'curated'>(initialTab);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-red-600 selection:text-white">
@@ -56,6 +59,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           {/* Admin Section Tabs */}
           <div className="hidden sm:flex items-center gap-1.5 ml-4 pl-4 border-l border-slate-800">
             <button
+              onClick={() => setActiveTab('curated')}
+              className={`px-3 py-1.5 rounded-xl font-mono text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeTab === 'curated'
+                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 border border-emerald-500/50'
+                  : 'bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-700/80'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Curated Article AI Crawler</span>
+              <span className="px-1.5 py-0.2 rounded bg-emerald-500/30 text-emerald-200 text-[9px] font-black uppercase">
+                Staging
+              </span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('crawler')}
               className={`px-3 py-1.5 rounded-xl font-mono text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
                 activeTab === 'crawler'
@@ -64,31 +82,36 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               }`}
             >
               <Bot className="w-3.5 h-3.5" />
-              <span>AI Web Crawler</span>
+              <span>Bulk Store Crawler</span>
             </button>
 
             <button
               onClick={() => setActiveTab('shopify')}
               className={`px-3 py-1.5 rounded-xl font-mono text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
                 activeTab === 'shopify'
-                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 border border-emerald-500/50'
+                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 border border-indigo-500/50'
                   : 'bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-700/80'
               }`}
             >
-              <Store className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Shopify Connect & Scrape</span>
-              <span className="px-1.5 py-0.2 rounded bg-emerald-500/30 text-emerald-200 text-[9px] font-black uppercase">
-                NEW
-              </span>
+              <Store className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Shopify Sync</span>
             </button>
           </div>
         </div>
 
         {/* Center: Mobile / Indicator Pills */}
-        <div className="flex sm:hidden items-center gap-2">
+        <div className="flex sm:hidden items-center gap-1.5">
+          <button
+            onClick={() => setActiveTab('curated')}
+            className={`px-2 py-1 rounded-lg font-mono text-[10px] ${
+              activeTab === 'curated' ? 'bg-emerald-600 text-white font-bold' : 'bg-slate-800 text-slate-400'
+            }`}
+          >
+            Curated
+          </button>
           <button
             onClick={() => setActiveTab('crawler')}
-            className={`px-2.5 py-1 rounded-lg font-mono text-[11px] ${
+            className={`px-2 py-1 rounded-lg font-mono text-[10px] ${
               activeTab === 'crawler' ? 'bg-red-600 text-white font-bold' : 'bg-slate-800 text-slate-400'
             }`}
           >
@@ -96,8 +119,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </button>
           <button
             onClick={() => setActiveTab('shopify')}
-            className={`px-2.5 py-1 rounded-lg font-mono text-[11px] ${
-              activeTab === 'shopify' ? 'bg-emerald-600 text-white font-bold' : 'bg-slate-800 text-slate-400'
+            className={`px-2 py-1 rounded-lg font-mono text-[10px] ${
+              activeTab === 'shopify' ? 'bg-indigo-600 text-white font-bold' : 'bg-slate-800 text-slate-400'
             }`}
           >
             Shopify
@@ -138,7 +161,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* Main Admin Content View */}
       <main className="flex-1 flex flex-col w-full bg-slate-950">
-        {activeTab === 'crawler' ? (
+        {activeTab === 'curated' ? (
+          <CuratedCrawlerStudio
+            onProductsAddedToGlobalCatalog={onProductsAddedToGlobalCatalog}
+          />
+        ) : activeTab === 'crawler' ? (
           <CrawlerPage
             onBackToHome={onNavigateHome}
             onProductsAddedToGlobalCatalog={onProductsAddedToGlobalCatalog}

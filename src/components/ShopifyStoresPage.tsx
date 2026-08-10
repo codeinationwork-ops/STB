@@ -40,6 +40,7 @@ import {
   upsertBrandProductsToDb,
   updateBrandNameInDb
 } from '../lib/firestoreService';
+import { FEMALE_CLOTHING_REGEX, MALE_CLOTHING_REGEX } from '../lib/strictSearch';
 
 interface ShopifyStoresPageProps {
   onProductsAddedToGlobalCatalog?: (products: Product[]) => void;
@@ -158,16 +159,16 @@ export const ShopifyStoresPage: React.FC<ShopifyStoresPageProps> = ({
         prev.map((s) => (s.id === store.id || s.store_domain === store.store_domain ? updatedStore : s))
       );
 
-      const cleanDom = (store?.store_domain || '').replace(/^https?:\/\//, '').toLowerCase().split('/')[0];
+      const cleanDom = store.store_domain.replace(/^https?:\/\//, '').toLowerCase().split('/')[0];
       setProducts((prev) =>
-        prev.map((p) => ((p.store_domain || '').toLowerCase().includes(cleanDom) ? { ...p, vendor: trimmed } : p))
+        prev.map((p) => (p.store_domain.toLowerCase().includes(cleanDom) ? { ...p, vendor: trimmed } : p))
       );
 
       // 2. Persist updated store record to Firestore
       await saveShopifyStoreToDb(updatedStore);
 
       // 3. Update harvested products in DB
-      const storeProds = products.filter((p) => (p.store_domain || '').toLowerCase().includes(cleanDom));
+      const storeProds = products.filter((p) => p.store_domain.toLowerCase().includes(cleanDom));
       if (storeProds.length > 0) {
         const updatedProds = storeProds.map((p) => ({ ...p, vendor: trimmed }));
         saveShopifyProductsToDb(updatedProds).catch((e) =>
@@ -326,34 +327,28 @@ export const ShopifyStoresPage: React.FC<ShopifyStoresPageProps> = ({
         scrapedStore.store_name = customName;
       }
 
-      // Auto-classify gender & category for all harvested products
-      const autoClassifyGender = (title: string, desc?: string, category?: string): 'Men' | 'Women' | 'Unisex' => {
+      // Auto-classify gender for all harvested products
+      const autoClassifyGender = (title: string, desc?: string, category?: string, currentGender?: string): 'Men' | 'Women' | 'Unisex' => {
         const text = `${title} ${desc || ''} ${category || ''}`.toLowerCase();
-        const hasWomen = /\b(women|womens|women's|female|ladies|lady|girl|girls|dress|dresses|skirt|skirts|crop|bra|bras|leggings|gown|saree|sari|lehenga|kurti|bikini|monokini|camisole|frock|corset|blouse|midi|maxi|bodycon)\b/i.test(text);
-        const hasMen = /\b(men|mens|men's|male|guys|boy|boys|boxer|boxers|trunks|sherwani|vest|chinos|briefs|suit|tuxedo)\b/i.test(text);
+        const hasWomen = FEMALE_CLOTHING_REGEX.test(text);
+        const hasMen = MALE_CLOTHING_REGEX.test(text);
 
         if (hasWomen && !hasMen) return 'Women';
         if (hasMen && !hasWomen) return 'Men';
+        if (currentGender === 'Men' && !hasWomen) return 'Men';
+        if (currentGender === 'Women' && !hasMen) return 'Women';
+        if (currentGender === 'Unisex' && !hasWomen) return 'Unisex';
+        if (hasWomen) return 'Women';
+        if (hasMen) return 'Men';
         return 'Unisex';
       };
 
       const enrichedProducts = scrapedProducts.map((p, idx) => {
-        let assignedGender: 'Men' | 'Women' | 'Unisex' = 'Unisex';
-        if (p.gender === 'Men' || p.gender === 'Women' || p.gender === 'Unisex') {
-          assignedGender = p.gender;
-        } else {
-          assignedGender = autoClassifyGender(p.title, p.description, p.category);
-        }
-
-        const assignedCategory = (!p.category || p.category === 'Not Assigned' || p.category === 'Uncategorized' || p.category === 'N/A')
-          ? 'Apparel & Accessories'
-          : p.category;
-
+        const assignedGender = autoClassifyGender(p.title, p.description, p.category, p.gender);
         if (masterProds[idx]) {
           masterProds[idx].gender = assignedGender;
-          masterProds[idx].category = assignedCategory;
         }
-        return { ...p, gender: assignedGender, category: assignedCategory };
+        return { ...p, gender: assignedGender };
       });
 
       setScrapedResult({
@@ -385,29 +380,18 @@ export const ShopifyStoresPage: React.FC<ShopifyStoresPageProps> = ({
   const handleSaveScrapedToDatabase = async () => {
     if (!scrapedResult) return;
 
-    // Auto-resolve any remaining N/A or unassigned fields before saving
-    const sanitizedProducts = scrapedResult.products.map((p) => {
-      const cat = (!p.category || p.category === 'Not Assigned' || p.category === 'Uncategorized' || p.category === 'N/A')
-        ? 'Apparel & Accessories'
-        : p.category;
-      const gen = (!p.gender || p.gender === 'N/A' || p.gender === 'Not Assigned')
-        ? 'Unisex'
-        : p.gender;
-      return { ...p, category: cat, gender: gen };
-    });
+    // Filter ONLY ready products (products that are assigned, i.e. NOT N/A and NOT Uncategorized)
+    const readyProducts = scrapedResult.products.filter((p) => !isProductUnassigned(p));
+    const unassignedProds = scrapedResult.products.filter(isProductUnassigned);
 
-    const sanitizedMaster = scrapedResult.masterProducts.map((p) => {
-      const cat = (!p.category || p.category === 'Not Assigned' || p.category === 'Uncategorized' || p.category === 'N/A')
-        ? 'Apparel & Accessories'
-        : p.category;
-      const gen = (!p.gender || p.gender === 'N/A' || p.gender === 'Not Assigned')
-        ? 'Unisex'
-        : p.gender;
-      return { ...p, category: cat, gender: gen };
-    });
+    const readyMaster = scrapedResult.masterProducts.filter((p) => !isProductUnassigned(p));
+    const unassignedMaster = scrapedResult.masterProducts.filter(isProductUnassigned);
 
-    const readyProducts = sanitizedProducts;
-    const readyMaster = sanitizedMaster;
+    if (readyProducts.length === 0) {
+      showToast(`⚠️ Cannot save to database! All items have 'Not Assigned' details or N/A gender. Please assign details first.`);
+      setSelectedScrapedGenderFilter('UNASSIGNED_ONLY');
+      return;
+    }
 
     setIsSavingToDb(true);
     setDbSaveProgress({ current: 0, total: readyProducts.length, stage: 'Connecting to Firestore database...' });
@@ -451,13 +435,31 @@ export const ShopifyStoresPage: React.FC<ShopifyStoresPageProps> = ({
         }
       }
 
-      setScrapingLogs((prev) => [
-        ...prev,
-        `🎉 [Database Sync Complete] Store "${savedStore.store_name}" & ALL ${readyProducts.length} items saved to Firestore!`
-      ]);
+      if (unassignedProds.length > 0) {
+        // KEEP ONLY remaining unassigned N/A products in staging!
+        setScrapedResult({
+          store: scrapedResult.store,
+          products: unassignedProds,
+          masterProducts: unassignedMaster
+        });
 
-      showToast(`🎉 Successfully added all ${readyProducts.length} items for ${savedStore.store_name} to database!`);
-      setScrapedResult(null);
+        setScrapingLogs((prev) => [
+          ...prev,
+          `🎉 [Database Sync] Saved ${readyProducts.length} assigned items to Firestore!`,
+          `⚠️ [N/A Staging] ${unassignedProds.length} unassigned / N/A items kept in staging page for manual review.`
+        ]);
+
+        showToast(`🎉 Added ${readyProducts.length} newly ready items to DB! ${unassignedProds.length} N/A items remain in staging.`);
+        setSelectedScrapedGenderFilter('UNASSIGNED_ONLY');
+      } else {
+        setScrapingLogs((prev) => [
+          ...prev,
+          `🎉 [Database Sync Complete] Store "${savedStore.store_name}" & ALL ${readyProducts.length} items saved to Firestore!`
+        ]);
+
+        showToast(`🎉 Successfully added all ${readyProducts.length} items for ${savedStore.store_name} to database!`);
+        setScrapedResult(null);
+      }
 
       await loadStoresAndProducts();
     } catch (err: any) {
@@ -738,21 +740,42 @@ export const ShopifyStoresPage: React.FC<ShopifyStoresPageProps> = ({
   };
 
   const handleDeleteStore = async (storeId: string, storeName: string, storeDomain: string) => {
-    if (confirm(`Are you sure you want to delete "${storeName}" and all its harvested products from the database?`)) {
+    if (confirm(`Are you sure you want to delete "${storeName}" (${storeDomain}) and ALL its products from the database completely?`)) {
+      const targetDom = storeDomain.replace(/^https?:\/\//, '').toLowerCase().split('/')[0].trim();
+      const targetNameLower = storeName.toLowerCase().trim();
+
       // Optimistic state removal
-      setStores((prev) => prev.filter((s) => s.id !== storeId && s.store_name !== storeName));
-      const targetDom = (storeDomain || '').replace(/^https?:\/\//, '').toLowerCase().split('/')[0];
-      setProducts((prev) => prev.filter((p) => !(p.store_domain || '').toLowerCase().includes(targetDom)));
+      setStores((prev) =>
+        prev.filter((s) => {
+          const sDom = (s.store_domain || '').toLowerCase();
+          const sName = (s.store_name || '').toLowerCase();
+          if (s.id === storeId) return false;
+          if (targetDom && sDom.includes(targetDom)) return false;
+          if (targetNameLower && sName === targetNameLower) return false;
+          return true;
+        })
+      );
+
+      setProducts((prev) =>
+        prev.filter((p) => {
+          const prodDom = (p.store_domain || p.officialUrl || '').toLowerCase();
+          const prodVendor = (p.vendor || p.brand || p.brand_name || '').toLowerCase();
+          if (targetDom && prodDom.includes(targetDom)) return false;
+          if (targetNameLower && (prodVendor === targetNameLower || prodVendor.includes(targetNameLower))) return false;
+          return true;
+        })
+      );
 
       try {
-        const success = await deleteShopifyStoreFromDb(storeId, storeDomain);
+        const success = await deleteShopifyStoreFromDb(storeId, storeDomain, storeName);
         if (success) {
-          showToast(`Deleted ${storeName} from database.`);
+          showToast(`Successfully deleted "${storeName}" and all its products from the database completely.`);
         } else {
-          showToast(`Notice: Store removed locally.`);
+          showToast(`Notice: Removed "${storeName}" locally.`);
         }
       } catch (err: any) {
         console.error('Delete store error:', err);
+        showToast(`Error deleting store: ${err.message || 'Error'}`);
       } finally {
         await loadStoresAndProducts();
       }
@@ -775,7 +798,7 @@ export const ShopifyStoresPage: React.FC<ShopifyStoresPageProps> = ({
   };
 
   const filteredProducts = products.filter((p) => {
-    const matchesStore = selectedStoreFilter ? (p.store_domain || '').includes(selectedStoreFilter) : true;
+    const matchesStore = selectedStoreFilter ? p.store_domain.includes(selectedStoreFilter) : true;
     const matchesCategory =
       savedCategoryFilter === 'UNASSIGNED_ONLY'
         ? isProductUnassigned(p)
@@ -789,9 +812,9 @@ export const ShopifyStoresPage: React.FC<ShopifyStoresPageProps> = ({
         ? (p.gender || 'N/A').toLowerCase() === savedGenderFilter.toLowerCase()
         : true;
     const matchesSearch = searchQuery
-      ? (p.title || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.category || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-        String(p.variant_id || '').includes(searchQuery)
+      ? p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        p.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        String(p.variant_id).includes(searchQuery)
       : true;
     return matchesStore && matchesCategory && matchesGender && matchesSearch;
   });
@@ -1779,8 +1802,8 @@ const handleDirectCheckout = (storeDomain: string, variantId: string, discountCo
         ) : (
           <div className="space-y-4">
             {stores.map((s) => {
-              const cleanDom = (s?.store_domain || '').replace(/^https?:\/\//, '').toLowerCase().split('/')[0];
-              const storeProds = products.filter((p) => (p?.store_domain || '').toLowerCase().includes(cleanDom));
+              const cleanDom = s.store_domain.replace(/^https?:\/\//, '').toLowerCase().split('/')[0];
+              const storeProds = products.filter((p) => p.store_domain.toLowerCase().includes(cleanDom));
               const naStoreProds = storeProds.filter(isProductUnassigned);
               const isExpanded = !!expandedStoreIds[s.id || s.store_domain];
 
@@ -2054,7 +2077,7 @@ const handleDirectCheckout = (storeDomain: string, variantId: string, discountCo
       {activeMainTab === 'assigned_products' && (() => {
         const assignedProductsList = products.filter((p) => !isProductUnassigned(p));
         const filteredAssignedProducts = assignedProductsList.filter((p) => {
-          if (assignedStoreFilter && !(p.store_domain || '').toLowerCase().includes(assignedStoreFilter.toLowerCase())) {
+          if (assignedStoreFilter && !p.store_domain.toLowerCase().includes(assignedStoreFilter.toLowerCase())) {
             return false;
           }
           if (assignedCategoryFilter !== 'ALL' && (p.category || '').toLowerCase() !== assignedCategoryFilter.toLowerCase()) {
@@ -2065,10 +2088,10 @@ const handleDirectCheckout = (storeDomain: string, variantId: string, discountCo
           }
           if (searchQuery.trim()) {
             const q = searchQuery.toLowerCase();
-            const titleMatch = (p.title || '').toLowerCase().includes(q);
+            const titleMatch = p.title.toLowerCase().includes(q);
             const vendorMatch = (p.vendor || '').toLowerCase().includes(q);
             const catMatch = (p.category || '').toLowerCase().includes(q);
-            const variantMatch = String(p.variant_id || '').includes(q);
+            const variantMatch = String(p.variant_id).includes(q);
             return titleMatch || vendorMatch || catMatch || variantMatch;
           }
           return true;

@@ -19,7 +19,6 @@ import {
   Tag,
   ArrowUpRight,
   CornerDownLeft,
-  Store,
   MapPin,
   Bot,
   User,
@@ -33,13 +32,12 @@ import {
   X
 } from 'lucide-react';
 import { Product, UserAddress, UserSession } from '../types';
-import { logSearchQueryToDb, getLiveProductsFromDb, safeNumber, normalizeStoreAndBrandName, INITIAL_D2C_PRODUCTS, isMaleProduct, isFemaleProduct, interleaveByBrand, pickNextBrandDiverseProduct } from '../lib/firestoreService';
+import { logSearchQueryToDb, getLiveProductsFromDb, safeNumber, normalizeStoreAndBrandName } from '../lib/firestoreService';
 import { verifyProductsWithGeminiAI, getAICachedVerification } from '../lib/geminiCategoryVerifier';
-import { normalizeQuery, normalizeText } from '../lib/strictSearch';
+import { normalizeQuery, normalizeText, isMaleProduct, isFemaleProduct } from '../lib/strictSearch';
 import { BrandLogo } from './BrandLogo';
 import { VirtualTryOnStudio } from './VirtualTryOnStudio';
 import { BrandRequestModals } from './BrandRequestModals';
-import { ShopifyStoresPage } from './ShopifyStoresPage';
 
 interface GeminiSearchLandingProps {
   products: Product[];
@@ -58,8 +56,6 @@ interface GeminiSearchLandingProps {
   onOpenCrawler?: () => void;
   onOpenGptTryOn?: (product?: Product | null, imageUrl?: string | null) => void;
   onSwitchToDashboard?: () => void;
-  onSelectGender?: (gender: string) => void;
-  tryOnCredits?: number;
 }
 
 interface SearchIntentData {
@@ -83,7 +79,9 @@ interface SearchResponseData {
 
 export const MALE_CATEGORIES = [
   { id: 'All', label: 'All Male Categories', keywords: [] },
-  { id: 'Tops & Shirts', label: 'Tops & Shirts', keywords: ['top', 'tops', 'shirt', 'shirts', 't-shirt', 'tshirt', 'tee', 'tees', 'polo', 'polos', 'henley', 'overshirt', 'sweatshirt', 'sweater', 'hoodie', 'cardigan', 'turtleneck'] },
+  { id: 'T-Shirts & Tees', label: 'T-Shirts & Tees', keywords: ['t-shirt', 'tshirt', 't-shirts', 'tshirts', 'tee', 'tees', 'graphic tee', 'oversized tee', 'basic tee', 'crew neck', 'polo t shirt', 'henley'] },
+  { id: 'Co-Ord Sets', label: 'Co-Ord Sets', keywords: ['co-ord', 'coord', 'co ord', 'co-ords', 'coords', 'matching set', 'two piece', 'twinset'] },
+  { id: 'Tops & Shirts', label: 'Tops & Shirts', keywords: ['top', 'tops', 'shirt', 'shirts', 'polo', 'polos', 'henley', 'overshirt', 'sweatshirt', 'sweater', 'hoodie', 'cardigan', 'turtleneck'] },
   { id: 'Bottoms', label: 'Bottoms & Pants', keywords: ['bottom', 'bottoms', 'pant', 'pants', 'jeans', 'jean', 'denim', 'trouser', 'trousers', 'cargo', 'cargos', 'jogger', 'joggers', 'short', 'shorts', 'chino', 'chinos', 'sweatpants', 'trackpant', 'trackpants', 'slacks'] },
   { id: 'Outerwear', label: 'Outerwear & Jackets', keywords: ['outerwear', 'jacket', 'jackets', 'coat', 'coats', 'blazer', 'blazers', 'vest', 'vests', 'parka', 'windbreaker', 'trench', 'puffer', 'bomber', 'fleece'] },
   { id: 'Suiting & Tailored Wear', label: 'Suiting & Tailored Wear', keywords: ['suit', 'suits', 'suiting', 'blazer', 'blazers', 'tuxedo', 'tuxedos', 'waistcoat', 'dress pants', 'formal'] },
@@ -98,8 +96,10 @@ export const MALE_CATEGORIES = [
 
 export const FEMALE_CATEGORIES = [
   { id: 'All', label: 'All Female Categories', keywords: [] },
+  { id: 'T-Shirts & Tees', label: 'T-Shirts & Tees', keywords: ['t-shirt', 'tshirt', 't-shirts', 'tshirts', 'tee', 'tees', 'graphic tee', 'oversized tee', 'basic tee', 'crop tee'] },
+  { id: 'Co-Ord Sets', label: 'Co-Ord Sets', keywords: ['co-ord', 'coord', 'co ord', 'co-ords', 'coords', 'matching set', 'two piece', 'skirt set', 'short set'] },
   { id: 'Dresses & Rompers', label: 'Dresses & Rompers', keywords: ['dress', 'dresses', 'gown', 'gowns', 'maxi', 'midi', 'bodycon', 'frock', 'romper', 'rompers', 'jumpsuit', 'jumpsuits', 'sundress', 'cocktail'] },
-  { id: 'Tops & Shirts', label: 'Tops & Crop Tops', keywords: ['top', 'tops', 'crop top', 'crop', 'shirt', 'shirts', 't-shirt', 'tshirt', 'tee', 'tees', 'blouse', 'blouses', 'cami', 'camisole', 'sweatshirt', 'sweater', 'hoodie', 'cardigan', 'bodysuit', 'turtleneck'] },
+  { id: 'Tops & Shirts', label: 'Tops & Crop Tops', keywords: ['top', 'tops', 'crop top', 'crop', 'shirt', 'shirts', 'blouse', 'blouses', 'cami', 'camisole', 'sweatshirt', 'sweater', 'hoodie', 'cardigan', 'bodysuit', 'turtleneck'] },
   { id: 'Bottoms', label: 'Bottoms & Skirts', keywords: ['bottom', 'bottoms', 'pant', 'pants', 'jeans', 'jean', 'denim', 'trouser', 'trousers', 'cargo', 'cargos', 'jogger', 'joggers', 'short', 'shorts', 'skirt', 'skirts', 'skort', 'leggings', 'palazzo', 'culottes', 'slacks'] },
   { id: 'Outerwear', label: 'Outerwear & Jackets', keywords: ['outerwear', 'jacket', 'jackets', 'coat', 'coats', 'blazer', 'blazers', 'shrug', 'cardigan', 'parka', 'windbreaker', 'trench', 'puffer', 'fleece'] },
   { id: 'Suiting & Tailored Wear', label: 'Suiting & Tailored Wear', keywords: ['suit', 'suits', 'suiting', 'blazer', 'blazers', 'tuxedo', 'waistcoat', 'tailored'] },
@@ -173,7 +173,7 @@ export const matchesCategoryFilter = (p: Product, catName: string, genderMode: '
   if (keywords.length > 0) {
     const pName = (p.name || '').toLowerCase();
     const pDesc = (p.description || '').toLowerCase();
-    const pSpecs = (p.specs || []).map((s) => `${s?.label || ''} ${s?.value || ''}`).join(' ').toLowerCase();
+    const pSpecs = (p.specs || []).map((s) => `${s.label} ${s.value}`).join(' ').toLowerCase();
 
     return keywords.some((kw) => pName.includes(kw) || pDesc.includes(kw) || pCatLower.includes(kw) || pSpecs.includes(kw));
   }
@@ -197,16 +197,14 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
   onOpenAddressVault,
   onOpenCrawler,
   onOpenGptTryOn,
-  onSwitchToDashboard,
-  onSelectGender,
-  tryOnCredits = 1
+  onSwitchToDashboard
 }) => {
   const [query, setQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [activeSearchQuery, setActiveSearchQuery] = useState<string | null>(null);
   const [searchResult, setSearchResult] = useState<SearchResponseData | null>(null);
   const [matchedProducts, setMatchedProducts] = useState<Product[]>([]);
-  const [searchGenderFilter, setSearchGenderFilter] = useState<'All' | 'Men' | 'Women' | 'Unisex'>('All');
+  const [searchGenderFilter, setSearchGenderFilter] = useState<'All' | 'Men' | 'Women'>('All');
   const [selectedRandomProduct, setSelectedRandomProduct] = useState<Product | null>(null);
   const [selectedGenderMode, setSelectedGenderMode] = useState<'Men' | 'Women' | null>(() => {
     if (typeof window !== 'undefined' && window.location.pathname.toLowerCase().startsWith('/products')) {
@@ -224,34 +222,15 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
   const [isBudgetSidebarOpen, setIsBudgetSidebarOpen] = useState<boolean>(false);
   const [isPriceFiltering, setIsPriceFiltering] = useState<boolean>(false);
   const [noBudgetMatchError, setNoBudgetMatchError] = useState<string | null>(null);
-  const [isShopifyConnectOpen, setIsShopifyConnectOpen] = useState<boolean>(false);
 
-  const [activeImageIndex, setActiveImageIndex] = useState(0);
-  const [isListening, setIsListening] = useState(false);
-  const [showSearchOverlay, setShowSearchOverlay] = useState(false);
-  const [showTryOnStudio, setShowTryOnStudio] = useState(false);
-  const [customTryOnImage, setCustomTryOnImage] = useState<string | null>(null);
-  const [removalModalOpen, setRemovalModalOpen] = useState(false);
-  const [additionModalOpen, setAdditionModalOpen] = useState(false);
-
-  const clickTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const touchStartXRef = useRef<number | null>(null);
-  const seenProductIdsRef = useRef<Set<string>>(new Set());
-  const recentBrandHistoryRef = useRef<string[]>([]);
-
-  const applyActiveFilters = async (
+  const applyActiveFilters = (
     genderMode: 'Men' | 'Women' | null,
     minP: number | null,
     maxP: number | null
   ) => {
     if (!genderMode) return;
 
-    let pool = products || [];
-    if (pool.length === 0) {
-      pool = await getLiveProductsFromDb([]);
-    }
-
-    let filtered = pool.filter((p) => {
+    let filtered = products.filter((p) => {
       // 1. Gender check
       const matchesGender = genderMode === 'Men' ? isMaleProduct(p) : isFemaleProduct(p);
       if (!matchesGender) return false;
@@ -268,41 +247,24 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
     if (filtered.length > 0) {
       setNoBudgetMatchError(null);
       setMatchedProducts(filtered);
-      const nextItem = pickNextBrandDiverseProduct(
-        filtered,
-        selectedRandomProduct,
-        seenProductIdsRef.current,
-        recentBrandHistoryRef.current
-      );
-      if (nextItem) {
-        setSelectedRandomProduct(nextItem);
-        setActiveImageIndex(0);
+      let unseen = filtered.filter((p) => !seenProductIdsRef.current.has(p.id));
+      if (unseen.length === 0) {
+        filtered.forEach((p) => seenProductIdsRef.current.delete(p.id));
+        unseen = filtered;
       }
+      const nextItem = unseen[Math.floor(Math.random() * unseen.length)];
+      seenProductIdsRef.current.add(nextItem.id);
+      setSelectedRandomProduct(nextItem);
+      setActiveImageIndex(0);
     } else {
-      // Fallback to any product matching gender so view always transitions safely
-      const genderFallback = pool.filter((p) => genderMode === 'Men' ? isMaleProduct(p) : isFemaleProduct(p));
-      const fallbackList = genderFallback;
-      if (fallbackList.length > 0) {
-        setNoBudgetMatchError(null);
-        setMatchedProducts(fallbackList);
-        const item = pickNextBrandDiverseProduct(
-          fallbackList,
-          selectedRandomProduct,
-          seenProductIdsRef.current,
-          recentBrandHistoryRef.current
-        );
-        setSelectedRandomProduct(item || fallbackList[0]);
-        setActiveImageIndex(0);
-      } else {
-        setMatchedProducts([]);
-        setSelectedRandomProduct(null);
+      setMatchedProducts([]);
+      setSelectedRandomProduct(null);
 
-        const errText = minP !== null && maxP !== null
-          ? `No ${genderMode.toLowerCase()}'s products found matching budget ₹${minP.toLocaleString('en-IN')} - ₹${maxP.toLocaleString('en-IN')}`
-          : `No ${genderMode.toLowerCase()}'s products found`;
+      const errText = minP !== null && maxP !== null
+        ? `No ${genderMode.toLowerCase()}'s products found matching budget ₹${minP.toLocaleString('en-IN')} - ₹${maxP.toLocaleString('en-IN')}`
+        : `No ${genderMode.toLowerCase()}'s products found`;
 
-        setNoBudgetMatchError(errText);
-      }
+      setNoBudgetMatchError(errText);
     }
   };
 
@@ -337,16 +299,32 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
     applyActiveFilters(selectedGenderMode, null, null);
   };
 
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [isListening, setIsListening] = useState(false);
+  const [showSearchOverlay, setShowSearchOverlay] = useState(false);
+  const [showTryOnStudio, setShowTryOnStudio] = useState(false);
+  const [customTryOnImage, setCustomTryOnImage] = useState<string | null>(null);
+  const [removalModalOpen, setRemovalModalOpen] = useState(false);
+  const [additionModalOpen, setAdditionModalOpen] = useState(false);
+
+  const clickTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const touchStartXRef = useRef<number | null>(null);
+  const seenProductIdsRef = useRef<Set<string>>(new Set());
+
   // Shuffle to next product within active category & filters
   const handleShuffleNextProduct = () => {
     if (matchedProducts.length > 0) {
-      const nextItem = pickNextBrandDiverseProduct(
-        matchedProducts,
-        selectedRandomProduct,
-        seenProductIdsRef.current,
-        recentBrandHistoryRef.current
-      );
+      let unseen = matchedProducts.filter((p) => !seenProductIdsRef.current.has(p.id));
+      if (unseen.length === 0) {
+        matchedProducts.forEach((p) => seenProductIdsRef.current.delete(p.id));
+        unseen = matchedProducts;
+      }
+      const currentId = selectedRandomProduct?.id;
+      const candidates = unseen.filter((p) => p.id !== currentId);
+      const pool = candidates.length > 0 ? candidates : unseen;
+      const nextItem = pool[Math.floor(Math.random() * pool.length)];
       if (nextItem) {
+        seenProductIdsRef.current.add(nextItem.id);
         setSelectedRandomProduct(nextItem);
         setActiveImageIndex(0);
       }
@@ -409,8 +387,6 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
         return isMaleProduct(p);
       } else if (searchGenderFilter === 'Women') {
         return isFemaleProduct(p);
-      } else if (searchGenderFilter === 'Unisex') {
-        return (p.gender || '').toLowerCase() === 'unisex';
       }
       return true;
     });
@@ -419,7 +395,7 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
   // Dynamic Category list merging base categories with actual Shopify product categories
   const activeCategoryList = useMemo(() => {
     const baseList = selectedGenderMode === 'Women' ? FEMALE_CATEGORIES : MALE_CATEGORIES;
-    const existingIds = new Set(baseList.map((c) => (c?.id || '').toLowerCase()));
+    const existingIds = new Set(baseList.map((c) => c.id.toLowerCase()));
 
     const extraCats: { id: string; label: string; keywords: string[] }[] = [];
 
@@ -705,18 +681,14 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
     const pool = products.length > 0 ? products : await getLiveProductsFromDb(products);
     const instantMatches = filterProductsBySearchIntent(pool, trimmed, selectedGenderMode);
 
-    setMatchedProducts(instantMatches.length > 0 ? instantMatches : pool);
+    setMatchedProducts(instantMatches);
     if (instantMatches.length > 0) {
       setSelectedRandomProduct(instantMatches[0]);
       if (!selectedGenderMode) {
         setSelectedGenderMode(isMaleProduct(instantMatches[0]) ? 'Men' : 'Women');
       }
-    } else if (pool.length > 0) {
-      const fallbackItem = pool[Math.floor(Math.random() * pool.length)];
-      setSelectedRandomProduct(fallbackItem);
-      if (!selectedGenderMode) {
-        setSelectedGenderMode(isMaleProduct(fallbackItem) ? 'Men' : 'Women');
-      }
+    } else {
+      setSelectedRandomProduct(null);
     }
     setIsSearching(false);
 
@@ -842,20 +814,16 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
   };
 
   // Select non-repeating product by gender for the screen view
-  const handleSelectGender = async (gender: 'Men' | 'Women') => {
+  const handleSelectGender = (gender: 'Men' | 'Women') => {
     setSelectedGenderMode(gender);
     setSearchGenderFilter(gender);
     setActiveImageIndex(0);
-
-    if (onSelectGender) {
-      onSelectGender(gender);
-    }
 
     if (typeof window !== 'undefined' && !window.location.pathname.toLowerCase().startsWith('/products')) {
       window.history.pushState({}, '', '/products');
     }
 
-    await applyActiveFilters(
+    applyActiveFilters(
       gender,
       isBudgetApplied ? appliedMinBudget : null,
       isBudgetApplied ? appliedMaxBudget : null
@@ -912,7 +880,7 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
     // Keep the current product showcase active or pick from catalog if none selected
     if (!selectedRandomProduct && products.length > 0) {
       const genderPool = products.filter((p) => (targetGender === 'Men' ? isMaleProduct(p) : isFemaleProduct(p)));
-      setSelectedRandomProduct(genderPool.length > 0 ? genderPool[0] : null);
+      setSelectedRandomProduct(genderPool.length > 0 ? genderPool[0] : products[0]);
     }
 
     // Keep state on /products path so user stays on the showcase feed
@@ -964,30 +932,6 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
 
           {/* Header Right Actions */}
           <div className="flex items-center gap-2.5 sm:gap-3">
-
-            {/* Try-On Button in Top Bar */}
-            <button
-              onClick={() => {
-                if (onOpenGptTryOn) {
-                  onOpenGptTryOn(selectedRandomProduct, selectedRandomProduct?.images?.[0]);
-                }
-              }}
-              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white font-mono text-xs font-bold flex items-center gap-1.5 shadow-sm cursor-pointer transition-all"
-              title="AI Virtual Try-On"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-300 fill-amber-300" />
-              <span className="hidden sm:inline">Try-On ({tryOnCredits})</span>
-            </button>
-
-            {/* Shopify Connect Scraper Modal Button */}
-            <button
-              onClick={() => setIsShopifyConnectOpen(true)}
-              className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-emerald-400 font-mono text-xs font-bold flex items-center gap-1.5 border border-slate-700 hover:border-emerald-500/50 shadow-sm cursor-pointer transition-all"
-              title="Connect & Scrape Shopify Store"
-            >
-              <Store className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden sm:inline">Shopify Connect</span>
-            </button>
 
             {/* Admin Panel Quick Access Button (If Whitelisted Admin) */}
             {currentUser?.email === 'imamir760@gmail.com' && onNavigateAdmin && (
@@ -1300,7 +1244,7 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
                         className="py-2.5 sm:py-3 px-3.5 rounded-xl bg-gradient-to-r from-[#6C3BFF] via-[#8B5CFF] to-[#FF2D55] hover:opacity-95 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md shadow-purple-500/30 active:scale-[0.98] transition-all cursor-pointer"
                       >
                         <Sparkles className="w-4 h-4 text-amber-300 fill-amber-300" />
-                        <span>Try-On ({tryOnCredits})</span>
+                        <span>Try-On</span>
                       </button>
 
                       {/* Shop Now Button (Dark Navy) */}
@@ -1410,7 +1354,7 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
                           const target = e.currentTarget;
                           if (!target.dataset.triedFallback) {
                             target.dataset.triedFallback = 'true';
-                            target.src = 'https://images.unsplash.com/photo-1617137968427-85924c800a22?w=600&auto=format&fit=crop&q=80';
+                            target.src = '/male_ss.png';
                           }
                         }}
                         alt="Men's Fashion"
@@ -1473,7 +1417,7 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
                           const target = e.currentTarget;
                           if (!target.dataset.triedFallback) {
                             target.dataset.triedFallback = 'true';
-                            target.src = 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600&auto=format&fit=crop&q=80';
+                            target.src = '/female_ss.png';
                           }
                         }}
                         alt="Women's Fashion"
@@ -1497,48 +1441,25 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
                   </motion.div>
 
                 </div>
-
-                {/* SHOPIFY CONNECT HOMEPAGE CARD & BANNER */}
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.15 }}
-                  className="mt-6 w-full max-w-sm sm:max-w-xl md:max-w-2xl mx-auto px-2 sm:px-4"
-                >
-                  <div 
-                    onClick={() => setIsShopifyConnectOpen(true)}
-                    className="group relative rounded-2xl bg-slate-900 border border-slate-800 hover:border-emerald-500/50 p-4 sm:p-5 shadow-xl shadow-slate-950/20 hover:shadow-emerald-950/20 cursor-pointer transition-all duration-300 flex flex-col sm:flex-row items-center justify-between gap-4 overflow-hidden"
-                  >
-                    {/* Background Subtle Gradient Glow */}
-                    <div className="absolute -right-10 -bottom-10 w-36 h-36 bg-emerald-500/10 rounded-full blur-2xl group-hover:bg-emerald-500/20 transition-all pointer-events-none" />
-
-                    <div className="flex items-center gap-3.5 z-10 text-left">
-                      <div className="w-11 h-11 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0 text-emerald-400 group-hover:scale-110 transition-transform">
-                        <Store className="w-6 h-6 text-emerald-400" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wider">Shopify Connect</span>
-                          <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">D2C Live Scraper</span>
-                        </div>
-                        <h4 className="text-sm sm:text-base font-bold text-white mt-0.5">Connect & Import Any Shopify Brand Store</h4>
-                        <p className="text-xs text-slate-400 mt-0.5">Scrape products, auto-classify gender, and enable direct brand checkout permanently on <strong className="text-slate-200">/</strong> page.</p>
-                      </div>
-                    </div>
-
-                    <div className="z-10 shrink-0 w-full sm:w-auto">
-                      <button className="w-full sm:w-auto px-4 py-2 rounded-xl bg-emerald-500 group-hover:bg-emerald-400 text-slate-950 font-mono font-extrabold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 transition-all">
-                        <span>Launch Connector</span>
-                        <ArrowRight className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                </motion.div>
               </motion.div>
             )}
         </AnimatePresence>
 
       </main>
+
+      {/* Home Page Footer */}
+      <footer className="relative z-10 py-6 px-4 border-t border-slate-200/80 bg-white/80 backdrop-blur-md text-slate-500 text-xs font-mono mt-12">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
+          <div className="flex items-center gap-2 font-bold text-slate-800">
+            <span>ShopScoper a product by DEVIONYX (OPC) PRIVATE LIMITED</span>
+          </div>
+          <div className="flex items-center gap-4 text-slate-400 text-[11px]">
+            <span>© {new Date().getFullYear()} All rights reserved.</span>
+            <span>•</span>
+            <span>Direct Brand Checkout</span>
+          </div>
+        </div>
+      </footer>
 
 
 
@@ -1735,28 +1656,6 @@ export const GeminiSearchLanding: React.FC<GeminiSearchLandingProps> = ({
           setCustomTryOnImage(newImg);
         }}
       />
-
-      {/* Shopify Connect Modal */}
-      <AnimatePresence>
-        {isShopifyConnectOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-6 overflow-y-auto"
-          >
-            <div className="relative w-full max-w-6xl max-h-[92vh] overflow-y-auto bg-slate-950 border border-slate-800 rounded-3xl p-4 sm:p-6 shadow-2xl">
-              <button
-                onClick={() => setIsShopifyConnectOpen(false)}
-                className="absolute top-4 right-4 z-10 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-              <ShopifyStoresPage />
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
     </div>
   );

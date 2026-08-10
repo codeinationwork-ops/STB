@@ -163,6 +163,7 @@ export interface Product {
   badge?: string;
   priceDropHistory?: { date: string; directPrice: number; marketplacePrice: number }[];
   gender?: 'Men' | 'Women' | 'Unisex' | 'N/A';
+  articleCollection?: string;
   // Optional Shopify Direct Checkout & Pricing Sync attributes
   price?: number;
   variant_id?: string | number;

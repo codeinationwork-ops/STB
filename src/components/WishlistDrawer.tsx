@@ -11,7 +11,6 @@ interface WishlistDrawerProps {
   onRemoveFromWishlist: (productId: string) => void;
   onExpressBuy: (product: Product) => void;
   onTryOn?: (product: Product) => void;
-  tryOnCredits?: number;
 }
 
 export const WishlistDrawer: React.FC<WishlistDrawerProps> = ({
@@ -20,8 +19,7 @@ export const WishlistDrawer: React.FC<WishlistDrawerProps> = ({
   wishlistProducts,
   onRemoveFromWishlist,
   onExpressBuy,
-  onTryOn,
-  tryOnCredits = 1
+  onTryOn
 }) => {
   if (!isOpen) return null;
 
@@ -236,7 +234,7 @@ export const WishlistDrawer: React.FC<WishlistDrawerProps> = ({
                                   className="py-1.5 px-2.5 rounded-xl bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 hover:from-indigo-600 hover:to-pink-600 text-white font-mono text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs"
                                 >
                                   <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
-                                  <span>Try-On ({tryOnCredits})</span>
+                                  <span>Try-On</span>
                                 </button>
 
                                 <button

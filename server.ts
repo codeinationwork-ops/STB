@@ -412,8 +412,15 @@ app.get(['/api/v1/products', '/api/products'], async (req, res) => {
       if (gender && gender !== 'All') {
         const pGender = (p.gender || 'Unisex').toLowerCase();
         const gTarget = gender.toLowerCase();
-        if (gTarget === 'men' && pGender === 'women') return false;
-        if (gTarget === 'women' && pGender === 'men') return false;
+        const fullText = `${p.name} ${p.brand} ${p.category} ${p.description || ''}`.toLowerCase();
+        const isFemale = /\b(women|womens|female|ladies|girls|woman|dress|skirt|saree|sari|lehenga|kurti|gown|bikini|blouse|heels|handbag|lingerie|bra|kaftan|chikankari|palazzo|salwar|dupatta|corset|camisole|midi|maxi|bodycon|earrings|lipstick)\b/i.test(fullText);
+        const isMale = /\b(men|mens|male|guys|gents|gentleman|boy|boys|man|sherwani|boxer|boxers|trunks|briefs|tuxedo|chinos)\b/i.test(fullText);
+
+        if (gTarget === 'men') {
+          if (pGender === 'women' || isFemale) return false;
+        } else if (gTarget === 'women') {
+          if (pGender === 'men' || (isMale && !isFemale)) return false;
+        }
       }
 
       // Category filter
@@ -644,11 +651,17 @@ function evaluateProductHumanStyle(p: any, intent: Awaited<ReturnType<typeof par
   if (intent.gender_target) {
     const pGender = String(p.gender || 'Unisex').toLowerCase();
     const targetG = intent.gender_target.toLowerCase();
-    if (targetG === 'women' && pGender === 'men') {
+    const fullText = `${p.name} ${p.brand} ${p.category} ${p.description || ''}`.toLowerCase();
+    const isFemale = /\b(women|womens|female|ladies|girls|woman|dress|skirt|saree|sari|lehenga|kurti|gown|bikini|blouse|heels|handbag|lingerie|bra|kaftan|chikankari|palazzo|salwar|dupatta|corset|camisole|midi|maxi|bodycon|earrings|lipstick)\b/i.test(fullText);
+    const isMale = /\b(men|mens|male|guys|gents|gentleman|boy|boys|man|sherwani|boxer|boxers|trunks|briefs|tuxedo|chinos)\b/i.test(fullText);
+
+    if (targetG === 'women' && (pGender === 'men' || (isMale && !isFemale))) {
       return { product: p, score: -1, reason: `Product is for Men, user requested Women` };
     }
-    if (targetG === 'men' && pGender === 'women') {
-      return { product: p, score: -1, reason: `Product is for Women, user requested Men` };
+    if (targetG === 'men') {
+      if (pGender === 'women' || isFemale) {
+        return { product: p, score: -1, reason: `Product is female clothing or for Women, user requested Men` };
+      }
     }
   }
 
@@ -2208,21 +2221,81 @@ Output JSON object with a "verifications" key containing an array of objects:
   }
 });
 
+// Rule-based classification helper fallback
+function classifyProductRuleBased(p: any) {
+  const text = `${p.name || p.title || ''} ${p.category || ''} ${p.description || ''} ${Array.isArray(p.tags) ? p.tags.join(' ') : (p.tags || '')}`.toLowerCase();
+  
+  let category = p.category && p.category !== 'Not Assigned' ? p.category : 'Tops & Shirts';
+  if (/\b(co-ord|coord|co ord|co-ords|coords|matching set|two piece|two-piece|twinset|skirt set|short set)\b/i.test(text)) {
+    category = 'Co-Ord Sets';
+  } else if (/\b(t-shirt|tshirt|t-shirts|tshirts|tee|tees|henley|polo t shirt)\b/i.test(text)) {
+    category = 'T-Shirts & Tees';
+  } else if (/\b(jean|jeans|pants|trousers|cargos|cargo|jogger|joggers|shorts|short|skirt|skirts|sweatpants|leggings|slacks|chinos|bottom|bottoms)\b/i.test(text)) {
+    category = 'Bottoms';
+  } else if (/\b(dress|dresses|romper|rompers|jumpsuit|jumpsuits|gown|gowns|overall|overalls)\b/i.test(text)) {
+    category = 'Dresses & Rompers';
+  } else if (/\b(jacket|jackets|coat|coats|blazer|blazers|parka|parkas|puffer|puffers|windbreaker|vest|vests|outerwear)\b/i.test(text)) {
+    category = 'Outerwear';
+  } else if (/\b(suit|suits|tuxedo|tuxedos|tailored|waistcoat)\b/i.test(text)) {
+    category = 'Suiting & Tailored Wear';
+  } else if (/\b(saree|sarees|kurta|kurtas|sherwani|lehenga|ethnic|traditional|dhoti|abaya|kaftan)\b/i.test(text)) {
+    category = 'Traditional & Ethnic Wear';
+  } else if (/\b(bra|bras|sports bra|gym|activewear|compression|tights|workout|tracksuit)\b/i.test(text)) {
+    category = 'Activewear & Gym';
+  } else if (/\b(boxer|boxers|brief|briefs|panties|panty|lingerie|underwear|intimates|shapewear)\b/i.test(text)) {
+    category = 'Underwear & Intimates';
+  } else if (/\b(pajama|pajamas|pyjamas|nightwear|sleepwear|loungewear|robe)\b/i.test(text)) {
+    category = 'Sleepwear & Loungewear';
+  } else if (/\b(swimsuit|bikini|swimwear|trunks|boardshort|boardshorts)\b/i.test(text)) {
+    category = 'Swimwear';
+  } else if (/\b(sneakers|running shoes|athletic shoes|trainers|cleats)\b/i.test(text)) {
+    category = 'Athletic Footwear';
+  } else if (/\b(shoes|shoe|boots|sandals|slides|loafers|flats|heels|mules|footwear)\b/i.test(text)) {
+    category = 'Casual Shoes';
+  } else if (/\b(bag|bags|backpack|wallet|belt|sunglasses|eyewear|watch|watches|jewelry|necklace|ring|earring|cap|hat|accessory|accessories)\b/i.test(text)) {
+    category = 'Accessories & Jewelry';
+  } else if (/\b(shirt|shirts|polo|polos|tee|tees|t-shirt|t-shirts|top|tops|hoodie|hoodies|sweater|sweaters|blouse|crop top|cardigan)\b/i.test(text)) {
+    category = 'Tops & Shirts';
+  }
+
+  let gender = 'Unisex';
+  if (/\b(women|woman|female|ladies|lady|girl|girls|dress|skirt|saree|lehenga|croptop|blouse|bra|bikini)\b/i.test(text)) {
+    gender = 'Women';
+  } else if (/\b(men|man|male|gentlemen|boy|boys|sherwani|boxers|briefs)\b/i.test(text)) {
+    gender = 'Men';
+  }
+
+  return {
+    id: String(p.id || p.variant_id || p.name || p.title),
+    category,
+    gender
+  };
+}
+
 // AI Category & Gender Classification Route (Gemini Powered - Multimodal Photo & Text Analysis)
 app.post('/api/shopify/recategorize-ai', async (req, res) => {
+  const { products, customApiKey, apiKey: bodyApiKey } = req.body;
+  if (!Array.isArray(products) || products.length === 0) {
+    return res.status(400).json({ error: 'Array of products is required.' });
+  }
+
+  const itemsToProcess = products.slice(0, 40);
+  const ruleBasedResults = itemsToProcess.map(p => classifyProductRuleBased(p));
+
+  const headerKey = req.headers['x-gemini-api-key'] as string | undefined;
+  const effectiveKey = (customApiKey || bodyApiKey || headerKey || process.env.GEMINI_API_KEY || '').trim();
+
+  if (!effectiveKey) {
+    console.log('GEMINI_API_KEY is missing/empty, using rule-based classification engine.');
+    return res.json({
+      success: true,
+      categorizations: ruleBasedResults,
+      classifiedProducts: ruleBasedResults,
+      fallback: true
+    });
+  }
+
   try {
-    const { products, customApiKey, apiKey: bodyApiKey } = req.body;
-    if (!Array.isArray(products) || products.length === 0) {
-      return res.status(400).json({ error: 'Array of products is required.' });
-    }
-
-    const headerKey = req.headers['x-gemini-api-key'] as string | undefined;
-    const effectiveKey = (customApiKey || bodyApiKey || headerKey || process.env.GEMINI_API_KEY || '').trim();
-
-    if (!effectiveKey) {
-      return res.status(400).json({ error: 'GEMINI_API_KEY is not configured. Please ensure GEMINI_API_KEY environment variable is set.' });
-    }
-
     const activeAi = new GoogleGenAI({
       apiKey: effectiveKey,
       httpOptions: {
@@ -2247,50 +2320,26 @@ ALLOWED CATEGORIES:
 - Swimwear (Bikinis, swimsuits, swim trunks, board shorts)
 - Athletic Footwear
 - Casual Shoes
-- Boots
-- Dress Shoes
-- Sandals & Open-Toe
-- Bags & Luggage
-- Headwear
-- Eyewear
-- Neckwear
-- Small Leather Goods
-- Watches
-- Necklaces
-- Rings
-- Earrings
-- Bracelets
-- Skincare
-- Haircare
-- Body Care
-- Fragrance
-- Shaving & Hair Removal
-- Beard & Mustache Care
-- Men's Hair Styling
-- Pet Apparel
-- Not Assigned (Use ONLY if you cannot determine the category with high confidence)
+- Accessories & Jewelry
 
-ALLOWED GENDERS: "Men", "Women", "Unisex", "N/A"
+ALLOWED GENDERS: "Men", "Women", "Unisex"
 
 CRITICAL TAXONOMY RULES:
 1. SHIRTS, POLOS, BUTTON-DOWNS, TEES, TOPS ARE ALWAYS "Tops & Shirts". NEVER put them in "Bottoms"!
 2. PANTS, JEANS, TROUSERS, CHINOS, SHORTS, SKIRTS ARE ALWAYS "Bottoms".
 3. LOOK AT THE PRODUCT IMAGE CARE TO DETERMINE FIT & MODEL DEMOGRAPHIC (Male/Female/Unisex).
-4. IF AMBIGUOUS OR UNCERTAIN, ASSIGN "Not Assigned" for category and "N/A" for gender.
 
 Return ONLY a JSON object with keys "category" and "gender". Example:
 {"category": "Tops & Shirts", "gender": "Women"}`;
 
-    const itemsToProcess = products.slice(0, 40);
-
-    // Process items concurrently in chunks of 5 with Gemini Multimodal Photo Analysis
     const results: Array<{ id: string; category: string; gender: string }> = [];
 
     const chunkSize = 5;
     for (let i = 0; i < itemsToProcess.length; i += chunkSize) {
       const chunk = itemsToProcess.slice(i, i + chunkSize);
       const chunkPromises = chunk.map(async (p: any) => {
-        const id = String(p.id || p.variant_id || p.name || p.title);
+        const fallbackObj = classifyProductRuleBased(p);
+        const id = fallbackObj.id;
         const title = p.title || p.name || '';
         const description = (p.description || '').substring(0, 200);
         const imageUrl = (Array.isArray(p.images) && p.images[0]) || p.image_url || p.featured_image || p.image || null;
@@ -2341,12 +2390,15 @@ Analyze this product ${imagePart ? 'photo and text' : 'text'} according to the t
             const parsed = JSON.parse(resText);
             return {
               id,
-              category: parsed.category || 'Not Assigned',
-              gender: parsed.gender || 'N/A'
+              category: parsed.category || fallbackObj.category,
+              gender: parsed.gender || fallbackObj.gender
             };
           } catch (genErr: any) {
+            // If error is 401 / unauthenticated, break early
             const errString = genErr?.message || String(genErr);
-            // If multimodal failed or error occurred, retry text-only
+            if (errString.includes('401') || errString.includes('UNAUTHENTICATED') || errString.includes('invalid authentication')) {
+              throw genErr; // throw to outer try-catch to switch to rule-based fallback
+            }
             if (imagePart) {
               try {
                 const textOnlyResponse = await activeAi.models.generateContent({
@@ -2357,30 +2409,41 @@ Analyze this product ${imagePart ? 'photo and text' : 'text'} according to the t
                 const parsed = JSON.parse(textOnlyResponse.text || '{}');
                 return {
                   id,
-                  category: parsed.category || 'Not Assigned',
-                  gender: parsed.gender || 'N/A'
+                  category: parsed.category || fallbackObj.category,
+                  gender: parsed.gender || fallbackObj.gender
                 };
               } catch (tErr) {
-                // Continue to next model
+                // Continue
               }
-            }
-            if (modelName === candidateModels[candidateModels.length - 1]) {
-              console.warn(`Gemini classification notice for product ${id}:`, errString);
             }
           }
         }
 
-        return { id, category: p.category || 'Not Assigned', gender: p.gender || 'N/A' };
+        return fallbackObj;
       });
 
       const chunkResults = await Promise.all(chunkPromises);
       results.push(...chunkResults);
     }
 
-    return res.json({ success: true, categorizations: results });
+    return res.json({
+      success: true,
+      categorizations: results,
+      classifiedProducts: results
+    });
   } catch (err: any) {
-    console.error('AI Recategorize error:', err);
-    return res.status(500).json({ error: err.message || 'AI categorization failed.' });
+    const isAuthErr = String(err?.message || err).includes('401') || String(err?.message || err).includes('UNAUTHENTICATED');
+    if (isAuthErr) {
+      console.log('Gemini API unauthenticated or key unavailable, seamlessly using rule-based classification engine.');
+    } else {
+      console.log('AI category classification fallback to rule engine:', err?.message?.substring(0, 120) || 'Using rule engine');
+    }
+    return res.json({
+      success: true,
+      categorizations: ruleBasedResults,
+      classifiedProducts: ruleBasedResults,
+      fallback: true
+    });
   }
 });
 
@@ -2934,8 +2997,13 @@ Respond ONLY with a JSON array in exact format:
         });
       }
     }
-  } catch (err) {
-    console.warn('Notice AI category classification fallback:', err);
+  } catch (err: any) {
+    const isAuthErr = String(err?.message || err).includes('401') || String(err?.message || err).includes('UNAUTHENTICATED');
+    if (isAuthErr) {
+      console.log('Gemini batch classification unauthenticated, keeping default categories.');
+    } else {
+      console.log('AI batch classification notice:', err?.message?.substring(0, 120) || 'Using defaults');
+    }
   }
 
   return products;

@@ -13,32 +13,38 @@ import {
   PlusCircle,
   Trash2,
   ShieldCheck,
-  Store,
+  Bot,
+  Layers,
   X
 } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
 import { BrandRequestModals } from './BrandRequestModals';
-import { ShopifyStoresPage } from './ShopifyStoresPage';
+import { CuratedCrawlerStudio } from './CuratedCrawlerStudio';
+import { Product } from '../types';
 
 interface LandingPageProps {
   onNavigateLogin: () => void;
   onNavigateExplore: () => void;
+  onNavigateAdmin?: () => void;
   isAuthenticated: boolean;
   userName?: string;
   onLogout?: () => void;
+  onProductsAddedToGlobalCatalog?: (products: Product[]) => void;
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({
   onNavigateLogin,
   onNavigateExplore,
+  onNavigateAdmin,
   isAuthenticated,
   userName,
-  onLogout
+  onLogout,
+  onProductsAddedToGlobalCatalog
 }) => {
+  const [activeTab, setActiveTab] = useState<'discover' | 'crawler_studio'>('discover');
   const [selectedBrandCategory, setSelectedBrandCategory] = useState<string>('All');
   const [removalModalOpen, setRemovalModalOpen] = useState(false);
   const [additionModalOpen, setAdditionModalOpen] = useState(false);
-  const [isShopifyConnectOpen, setIsShopifyConnectOpen] = useState(false);
 
   // Direct D2C & High-Street Apparel Brands Catalog (Commercial marketplaces removed)
   const brandCatalog = [
@@ -215,22 +221,43 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       <header className="sticky top-0 z-30 w-full border-b border-purple-100/80 bg-white/90 backdrop-blur-xl px-4 lg:px-8 h-[64px] sm:h-[70px] flex items-center justify-between gap-4 max-w-7xl mx-auto shadow-2xs">
         {/* Brand Logo */}
         <div className="flex items-center gap-3 shrink-0">
-          <div className="cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+          <div className="cursor-pointer" onClick={() => { setActiveTab('discover'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
             <BrandLogo size="md" />
           </div>
         </div>
 
-        {/* Action Button */}
-        <div className="flex items-center gap-2.5 shrink-0">
+        {/* Studio & Discovery Section Navigation */}
+        <div className="flex items-center gap-1.5 bg-slate-100/90 p-1 rounded-full border border-purple-200/80 shadow-inner">
           <button
-            onClick={() => setIsShopifyConnectOpen(true)}
-            className="h-[38px] sm:h-[42px] px-3.5 sm:px-4.5 rounded-full bg-slate-900 hover:bg-slate-800 text-emerald-400 font-mono font-bold text-xs sm:text-sm border border-slate-700 hover:border-emerald-500/50 shadow-sm flex items-center justify-center gap-2 transition-all cursor-pointer"
-            title="Connect & Scrape Shopify Brand Store"
+            onClick={() => setActiveTab('discover')}
+            className={`px-3 sm:px-4 py-1.5 rounded-full text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+              activeTab === 'discover'
+                ? 'bg-white text-[#6C3BFF] shadow-xs border border-purple-100'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
           >
-            <Store className="w-4 h-4 text-emerald-400" />
-            <span>Shopify Connect</span>
+            <Globe className="w-3.5 h-3.5 text-[#6C3BFF]" />
+            <span>D2C Discovery</span>
           </button>
 
+          <button
+            onClick={() => setActiveTab('crawler_studio')}
+            className={`px-3 sm:px-4 py-1.5 rounded-full text-xs font-mono font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+              activeTab === 'crawler_studio'
+                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-600/30'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Bot className="w-3.5 h-3.5 text-emerald-300" />
+            <span>Curated AI Crawler Studio</span>
+            <span className="hidden sm:inline-block px-1.5 py-0.2 rounded-full bg-emerald-400/30 text-emerald-200 text-[9px] font-black uppercase">
+              Staging
+            </span>
+          </button>
+        </div>
+
+        {/* Action Button */}
+        <div className="flex items-center gap-2.5 shrink-0">
           {isAuthenticated ? (
             <button
               onClick={onNavigateExplore}
@@ -251,8 +278,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </div>
       </header>
 
-      {/* SECTION 1: ANIMATED DISCOVER HERO HUB */}
-      <main className="relative z-10 flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 pt-8 sm:pt-12 pb-16 flex flex-col gap-12 sm:gap-16">
+      {/* RENDER CURATED CRAWLER STUDIO DIRECTLY ON / IF SELECTED */}
+      {activeTab === 'crawler_studio' ? (
+        <main className="relative z-10 flex-1 w-full bg-slate-950 min-h-screen">
+          <CuratedCrawlerStudio onProductsAddedToGlobalCatalog={onProductsAddedToGlobalCatalog} />
+        </main>
+      ) : (
+        /* SECTION 1: ANIMATED DISCOVER HERO HUB */
+        <main className="relative z-10 flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 pt-8 sm:pt-12 pb-16 flex flex-col gap-12 sm:gap-16">
         
         {/* Hero Title & Announcement Block */}
         <motion.div
@@ -299,39 +332,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               Direct Store Prices &amp; Links
             </span>
           </div>
-
-          {/* SHOPIFY CONNECT HOMEPAGE HERO CONNECTOR CARD */}
-          <motion.div
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-            onClick={() => setIsShopifyConnectOpen(true)}
-            className="w-full max-w-2xl mx-auto mt-2 p-4 sm:p-5 rounded-2xl bg-slate-950 border border-emerald-500/40 hover:border-emerald-400 shadow-xl shadow-emerald-950/20 hover:shadow-emerald-950/40 transition-all duration-300 cursor-pointer text-left group relative overflow-hidden"
-          >
-            {/* Ambient Background Radial Glow */}
-            <div className="absolute -right-8 -bottom-8 w-36 h-36 bg-emerald-500/20 rounded-full blur-2xl group-hover:bg-emerald-500/30 transition-all pointer-events-none" />
-
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 relative z-10">
-              <div className="flex items-center gap-3.5">
-                <div className="w-11 h-11 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0 text-emerald-400 group-hover:scale-110 transition-transform">
-                  <Store className="w-6 h-6 text-emerald-400" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono font-bold text-emerald-400 uppercase tracking-wider">Shopify Connect</span>
-                    <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">D2C Live Scraper</span>
-                  </div>
-                  <h3 className="text-sm sm:text-base font-bold text-white mt-0.5">Connect & Scrape Any Shopify Store</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">Harvest items live, classify Men/Women/Unisex, & enable direct checkout on <strong className="text-slate-200">/</strong></p>
-                </div>
-              </div>
-
-              <button className="w-full sm:w-auto px-4.5 py-2.5 rounded-xl bg-emerald-500 group-hover:bg-emerald-400 text-slate-950 font-mono font-extrabold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 shrink-0 transition-all">
-                <span>Launch Connector</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
-          </motion.div>
         </motion.div>
 
         {/* Animated Main Hero Try-On & Collection Cards Grid */}
@@ -481,6 +481,47 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
         </div>
 
+        {/* Curated AI Web Crawler Studio Feature Banner on / */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.35 }}
+          onClick={() => {
+            setActiveTab('crawler_studio');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          className="rounded-[28px] bg-gradient-to-r from-slate-950 via-slate-900 to-indigo-950 border border-emerald-500/40 p-6 sm:p-7 shadow-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-5 cursor-pointer group hover:border-emerald-400 transition-all relative overflow-hidden"
+        >
+          <div className="absolute -right-10 -bottom-10 w-60 h-60 bg-emerald-500/15 rounded-full blur-3xl pointer-events-none" />
+          
+          <div className="flex items-center gap-4 relative z-10">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0 text-emerald-400 font-extrabold text-2xl shadow-lg shadow-emerald-500/10 group-hover:scale-105 transition-transform">
+              <Bot className="w-8 h-8 text-emerald-400" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono font-extrabold uppercase">
+                  Curated Article AI Web Crawler Studio
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-mono font-bold">
+                  Temporary Setup Staging
+                </span>
+              </div>
+              <h3 className="text-lg sm:text-xl font-extrabold text-white font-mono flex items-center gap-2">
+                <span>Crawl Any Apparel Store &amp; Curate Articles</span>
+              </h3>
+              <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl font-medium">
+                Paste any store URL (Nobero, Snitch, Zara, H&amp;M, etc.) to extract products into a <strong>Temporary Staging Workspace</strong>. Organize by <strong>Brand &gt; Gender &gt; Category &gt; Item</strong>, edit specs &amp; colors, auto-classify with Gemini AI, and commit directly to the catalog!
+              </p>
+            </div>
+          </div>
+
+          <div className="px-5 py-3 rounded-2xl bg-emerald-500 group-hover:bg-emerald-400 text-slate-950 font-mono font-black text-xs sm:text-sm flex items-center gap-2 shadow-xl shadow-emerald-500/25 shrink-0 transition-all">
+            <span>Launch Crawler Studio on /</span>
+            <ArrowRight className="w-4 h-4" />
+          </div>
+        </motion.div>
+
         {/* SECTION BREAK GAP & AI SEARCH LAUNCHPAD */}
         <div className="my-4 sm:my-8">
           <motion.div 
@@ -602,12 +643,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </div>
 
       </main>
+      )}
 
       {/* FOOTER: With Brand Removal & Brand Addition Request Buttons */}
       <footer className="relative z-10 py-6 px-4 border-t border-purple-100 bg-white text-slate-500 text-xs font-mono">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <span>© 2026 ShopScoper AI Inc. All rights reserved.</span>
+            <span>ShopScoper a product by DEVIONYX (OPC) PRIVATE LIMITED</span>
           </div>
 
           {/* Brand Requests Links */}
@@ -644,28 +686,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         onCloseRemoval={() => setRemovalModalOpen(false)}
         onCloseAddition={() => setAdditionModalOpen(false)}
       />
-
-      {/* Shopify Connect Modal */}
-      <AnimatePresence>
-        {isShopifyConnectOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-6 overflow-y-auto"
-          >
-            <div className="relative w-full max-w-6xl max-h-[92vh] overflow-y-auto bg-slate-950 border border-slate-800 rounded-3xl p-4 sm:p-6 shadow-2xl">
-              <button
-                onClick={() => setIsShopifyConnectOpen(false)}
-                className="absolute top-4 right-4 z-10 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-              <ShopifyStoresPage />
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
     </div>
   );

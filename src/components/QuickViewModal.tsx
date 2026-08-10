@@ -15,7 +15,6 @@ interface QuickViewModalProps {
   wishlistCount?: number;
   onOpenSearch?: () => void;
   onOpenWishlist?: () => void;
-  tryOnCredits?: number;
 }
 
 export const QuickViewModal: React.FC<QuickViewModalProps> = ({
@@ -29,7 +28,6 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({
   wishlistCount = 0,
   onOpenSearch,
   onOpenWishlist,
-  tryOnCredits = 1,
 }) => {
   const [selectedImgIndex, setSelectedImgIndex] = useState(0);
 
@@ -193,7 +191,7 @@ export const QuickViewModal: React.FC<QuickViewModalProps> = ({
                   className="py-2.5 sm:py-3 px-3.5 rounded-xl bg-gradient-to-r from-[#6C3BFF] via-[#8B5CFF] to-[#FF2D55] hover:opacity-95 text-white font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md shadow-purple-500/20 active:scale-[0.98] transition-all"
                 >
                   <Sparkles className="w-4 h-4 text-amber-300 fill-amber-300" />
-                  <span>Try-On ({tryOnCredits})</span>
+                  <span>Try-On</span>
                 </button>
 
                 {/* Shop Now Button (Dark Navy) */}

@@ -1,4 +1,57 @@
-import { CategoryItem, UserAddress, CommunitySavings, SavingsChartPoint } from './types';
+import { Product, CategoryItem, UserAddress, CommunitySavings, SavingsChartPoint } from '../types';
+
+export const INITIAL_PRODUCTS: Product[] = [
+  {
+    id: 'neemans-1',
+    name: 'ReLive Knit Merino Wool Sneakers',
+    brand: "NEEMAN'S",
+    category: 'Indie Footwear',
+    gender: 'Unisex',
+    directPrice: 2299,
+    marketplacePrice: 3299,
+    marketplaceName: "Neeman's Direct vs Marketplace",
+    images: [
+      'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=1200&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1560769629-975ec94e6a86?w=1200&auto=format&fit=crop&q=80',
+      'https://images.unsplash.com/photo-1595950653106-6c9ebd614d3a?w=1200&auto=format&fit=crop&q=80'
+    ],
+    specs: [
+      { label: 'Material', value: 'Recycled Merino Wool Knit' },
+      { label: 'Insole', value: 'Memory Foam Cushioning' }
+    ],
+    stockLeft: 15,
+    rating: 4.8,
+    reviewsCount: 210,
+    trendingScore: 98,
+    couponCode: 'NEEMANSDIRECT',
+    couponDiscount: 12,
+    officialUrl: 'https://neemans.com/products/relive-knit',
+    description: 'Breathable lightweight sneakers made from sustainable Merino wool knit.'
+  },
+  {
+    id: 'snitch-1',
+    name: '380 GSM Heavyweight Boxy Hoodie',
+    brand: 'SNITCH',
+    category: 'Streetwear & Oversized',
+    gender: 'Men',
+    directPrice: 1299,
+    marketplacePrice: 1799,
+    marketplaceName: 'Snitch Direct vs Marketplace',
+    images: ['https://images.unsplash.com/photo-1556905055-8f358a7a47b2?w=1200&auto=format&fit=crop&q=80'],
+    specs: [
+      { label: 'Fabric', value: '100% French Terry Cotton' },
+      { label: 'GSM', value: '380 GSM Heavyweight' }
+    ],
+    stockLeft: 14,
+    rating: 4.8,
+    reviewsCount: 128,
+    trendingScore: 98,
+    couponCode: 'SNITCHDIRECT10',
+    couponDiscount: 10,
+    officialUrl: 'https://snitch.co.in/products/boxy-hoodie',
+    description: 'Heavyweight 380 GSM French Terry cotton hoodie with drop shoulders.'
+  }
+];
 
 export const CATEGORIES: CategoryItem[] = [
   {
@@ -48,7 +101,7 @@ export const CATEGORIES: CategoryItem[] = [
   }
 ];
 
-export const DEFAULT_ADDRESSES: UserAddress[] = [
+export const MOCK_ADDRESSES: UserAddress[] = [
   {
     id: 'addr-1',
     label: 'Home (Default)',

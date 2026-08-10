@@ -15,7 +15,6 @@ interface HeaderProps {
   cartCount: number;
   totalSaved: number;
   defaultAddress: UserAddress;
-  tryOnCredits?: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -28,8 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
   wishlistCount,
   cartCount,
   totalSaved,
-  defaultAddress,
-  tryOnCredits = 1
+  defaultAddress
 }) => {
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const placeholders = [
@@ -163,7 +161,7 @@ export const Header: React.FC<HeaderProps> = ({
                 title="Launch OpenAI GPT TryOn AI"
               >
                 <Zap className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400 animate-pulse" />
-                <span className="hidden sm:inline">Try-On ({tryOnCredits})</span>
+                <span className="hidden sm:inline">GPT TryOn</span>
                 <span className="px-1 py-0.2 text-[9px] bg-emerald-500 text-black font-extrabold rounded">AI</span>
               </motion.button>
             )}
