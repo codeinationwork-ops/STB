@@ -260,3 +260,77 @@ export interface UserSession {
   avatar?: string;
 }
 
+// Auto Product Crawler System Types (Firestore auto_products & crawl_jobs)
+export interface AutoProductDoc {
+  id: string;
+  source: {
+    website: string;
+    url: string;
+  };
+  product: {
+    name: string;
+    brand: string;
+    category: string;
+    subcategory?: string;
+    gender: 'Men' | 'Women' | 'Unisex' | string;
+    garment_type?: string;
+    description?: string;
+  };
+  pricing: {
+    price: number;
+    mrp: number;
+    discount: number;
+    currency: string;
+  };
+  fashion: {
+    fabric?: string;
+    pattern?: string;
+    color?: string;
+    fit?: string;
+    styles: string[];
+    occasions: string[];
+    aesthetics?: string[];
+    fashion_tags?: string[];
+  };
+  collections: string[];
+  images: {
+    main: string;
+    gallery: string[];
+  };
+  ai: {
+    confidence: number;
+    model: string;
+    processedAt: string;
+    visual_description?: string;
+  };
+  crawler: {
+    jobId: string;
+    status: 'pending' | 'processing' | 'completed' | 'failed' | 'approved' | 'needs_review';
+    errorMessage?: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CrawlJobDoc {
+  id: string;
+  status: 'pending' | 'running' | 'paused' | 'completed' | 'failed';
+  websitesCount: number;
+  websitesList: string[];
+  productsFound: number;
+  productsProcessed: number;
+  productsSuccess: number;
+  productsFailed: number;
+  discoveredUrls?: Array<{
+    url: string;
+    sourceWebsite: string;
+    type: 'homepage' | 'category' | 'product';
+    status: 'pending' | 'processing' | 'completed' | 'failed' | 'needs_review';
+    errorMessage?: string;
+    processedAt?: string;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+

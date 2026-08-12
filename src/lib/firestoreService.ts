@@ -22,8 +22,11 @@ import {
   CrawlLogDoc,
   SearchLogDoc,
   ShopifyStore,
-  ShopifyProduct
+  ShopifyProduct,
+  AutoProductDoc,
+  CrawlJobDoc
 } from '../types';
+
 import { FEMALE_CLOTHING_REGEX, MALE_CLOTHING_REGEX } from './strictSearch';
 
 const PRODUCTS_COLLECTION = 'products';
@@ -35,6 +38,9 @@ const WISHLIST_COLLECTION = 'wishlists';
 const ORDERS_COLLECTION = 'orders';
 const SEARCHES_COLLECTION = 'searches';
 const USERS_COLLECTION = 'users';
+export const AUTO_PRODUCTS_COLLECTION = 'auto_products';
+export const CRAWL_JOBS_COLLECTION = 'crawl_jobs';
+
 
 export interface BrandSummary {
   id: string;
@@ -2288,5 +2294,179 @@ export async function deleteShopifyProductFromDb(productId: string): Promise<boo
     return false;
   }
 }
+
+// ============================================================================
+// AUTO PRODUCT CRAWLER FIRESTORE HELPERS (auto_products & crawl_jobs)
+// ============================================================================
+
+export async function saveAutoProductToDb(autoProd: Partial<AutoProductDoc>): Promise<boolean> {
+  try {
+    const docId = sanitizeDocId(autoProd.id || `ap_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
+    const ref = doc(db, AUTO_PRODUCTS_COLLECTION, docId);
+    const nowIso = new Date().toISOString();
+
+    const payload = sanitizeForFirestore({
+      ...autoProd,
+      id: docId,
+      createdAt: autoProd.createdAt || nowIso,
+      updatedAt: nowIso
+    });
+
+    await setDoc(ref, payload, { merge: true });
+    return true;
+  } catch (error) {
+    console.warn('Error saving auto_product to Firestore:', error);
+    return false;
+  }
+}
+
+export async function fetchAutoProductsFromDb(jobId?: string): Promise<AutoProductDoc[]> {
+  try {
+    let qTarget: any = collection(db, AUTO_PRODUCTS_COLLECTION);
+    if (jobId) {
+      qTarget = query(collection(db, AUTO_PRODUCTS_COLLECTION), where('crawler.jobId', '==', jobId));
+    }
+    const docs = await fetchQueryInChunks(qTarget, 500, 100);
+    const results: AutoProductDoc[] = [];
+    docs.forEach((d) => {
+      const data = d.data() as AutoProductDoc;
+      if (data && data.product) {
+        results.push({ ...data, id: d.id });
+      }
+    });
+    return results;
+  } catch (error) {
+    console.warn('Error fetching auto_products from Firestore:', error);
+    return [];
+  }
+}
+
+export async function deleteAutoProductFromDb(productId: string): Promise<boolean> {
+  try {
+    const docId = sanitizeDocId(productId);
+    await deleteDoc(doc(db, AUTO_PRODUCTS_COLLECTION, docId));
+    return true;
+  } catch (error) {
+    console.warn('Error deleting auto_product:', error);
+    return false;
+  }
+}
+
+export async function approveAutoProductToMainCatalog(autoProd: AutoProductDoc): Promise<boolean> {
+  try {
+    // Map AutoProductDoc to Product format for shopify_products / products collection
+    const product: Product = {
+      id: autoProd.id,
+      name: autoProd.product.name,
+      brand: autoProd.product.brand || 'D2C Brand',
+      category: autoProd.product.category || 'Apparel',
+      directPrice: autoProd.pricing.price || 1299,
+      marketplacePrice: autoProd.pricing.mrp || Math.round((autoProd.pricing.price || 1299) * 1.35),
+      marketplaceName: `${autoProd.product.brand || 'D2C'} Direct vs Marketplace`,
+      images: autoProd.images.gallery && autoProd.images.gallery.length > 0
+        ? [autoProd.images.main, ...autoProd.images.gallery].filter(Boolean)
+        : [autoProd.images.main || 'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=800'],
+      specs: [
+        { label: 'Fabric', value: autoProd.fashion.fabric || 'N/A' },
+        { label: 'Pattern', value: autoProd.fashion.pattern || 'N/A' },
+        { label: 'Fit', value: autoProd.fashion.fit || 'Regular' },
+        { label: 'Color', value: autoProd.fashion.color || 'N/A' },
+        { label: 'Gender', value: autoProd.product.gender || 'Unisex' }
+      ],
+      stockLeft: 20,
+      rating: 4.8,
+      reviewsCount: 35,
+      trendingScore: 96,
+      officialUrl: autoProd.source.url,
+      description: autoProd.product.description || `${autoProd.product.name} by ${autoProd.product.brand}.`,
+      gender: (autoProd.product.gender === 'Men' || autoProd.product.gender === 'Women') ? autoProd.product.gender : 'Unisex',
+      store_domain: autoProd.source.website
+    };
+
+    // Save to master database
+    await saveProductToDb(product);
+
+    // Update status in auto_products
+    await saveAutoProductToDb({
+      ...autoProd,
+      crawler: {
+        ...autoProd.crawler,
+        status: 'approved'
+      }
+    });
+
+    return true;
+  } catch (error) {
+    console.warn('Error approving auto_product to main catalog:', error);
+    return false;
+  }
+}
+
+export async function createCrawlJobInDb(jobData: Partial<CrawlJobDoc>): Promise<string> {
+  const jobId = jobData.id || `job_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  try {
+    const ref = doc(db, CRAWL_JOBS_COLLECTION, jobId);
+    const nowIso = new Date().toISOString();
+    const payload = sanitizeForFirestore({
+      id: jobId,
+      status: jobData.status || 'pending',
+      websitesCount: jobData.websitesCount || 0,
+      websitesList: jobData.websitesList || [],
+      productsFound: jobData.productsFound || 0,
+      productsProcessed: jobData.productsProcessed || 0,
+      productsSuccess: jobData.productsSuccess || 0,
+      productsFailed: jobData.productsFailed || 0,
+      discoveredUrls: jobData.discoveredUrls || [],
+      createdAt: nowIso,
+      updatedAt: nowIso
+    });
+    await setDoc(ref, payload, { merge: true });
+  } catch (e) {
+    console.warn('Error creating crawl_job in Firestore:', e);
+  }
+  return jobId;
+}
+
+export async function updateCrawlJobInDb(jobId: string, updates: Partial<CrawlJobDoc>): Promise<boolean> {
+  try {
+    const ref = doc(db, CRAWL_JOBS_COLLECTION, jobId);
+    await setDoc(ref, sanitizeForFirestore({
+      ...updates,
+      updatedAt: new Date().toISOString()
+    }), { merge: true });
+    return true;
+  } catch (e) {
+    console.warn('Error updating crawl_job in Firestore:', e);
+    return false;
+  }
+}
+
+export async function fetchCrawlJobFromDb(jobId: string): Promise<CrawlJobDoc | null> {
+  try {
+    const ref = doc(db, CRAWL_JOBS_COLLECTION, jobId);
+    const snapshot = await getDocs(query(collection(db, CRAWL_JOBS_COLLECTION), where('id', '==', jobId), limit(1)));
+    if (!snapshot.empty) {
+      return snapshot.docs[0].data() as CrawlJobDoc;
+    }
+  } catch (e) {
+    console.warn('Error fetching crawl_job from Firestore:', e);
+  }
+  return null;
+}
+
+export async function fetchAllCrawlJobsFromDb(): Promise<CrawlJobDoc[]> {
+  try {
+    const snapshot = await getDocs(query(collection(db, CRAWL_JOBS_COLLECTION), limit(50)));
+    const jobs: CrawlJobDoc[] = [];
+    snapshot.forEach((d) => {
+      jobs.push(d.data() as CrawlJobDoc);
+    });
+    return jobs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (e) {
+    console.warn('Error fetching all crawl_jobs from Firestore:', e);
+    return [];
+  }
+}
+
 
 

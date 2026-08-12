@@ -17,6 +17,7 @@ import { AdminLoginPage } from './components/AdminLoginPage';
 import { AdminDashboard } from './components/AdminDashboard';
 import { Forbidden403 } from './components/Forbidden403';
 import { GptTryOnStudio } from './components/GptTryOnStudio';
+import { PolicyPages, PolicyType } from './components/PolicyPages';
 
 import {
   INITIAL_PRODUCTS,
@@ -69,11 +70,14 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // Navigation Route State ('landing' | 'login' | 'explore' | 'admin')
-  const [currentView, setCurrentView] = useState<'landing' | 'login' | 'explore' | 'admin'>(() => {
+  // Navigation Route State ('landing' | 'login' | 'explore' | 'admin' | 'terms' | 'privacy' | 'refund')
+  const [currentView, setCurrentView] = useState<'landing' | 'login' | 'explore' | 'admin' | 'terms' | 'privacy' | 'refund'>(() => {
     const path = window.location.pathname.toLowerCase();
     if (path.startsWith('/admin')) return 'admin';
     if (path.startsWith('/login')) return 'login';
+    if (path.startsWith('/terms')) return 'terms';
+    if (path.startsWith('/privacy')) return 'privacy';
+    if (path.startsWith('/refund')) return 'refund';
     if (path.startsWith('/products') || path.startsWith('/explore') || path.startsWith('/dashboard')) return 'explore';
     return 'landing';
   });
@@ -90,6 +94,12 @@ export default function App() {
       window.history.replaceState({}, '', '/admin');
     } else if (currentView === 'login' && !path.startsWith('/login')) {
       window.history.replaceState({}, '', '/login');
+    } else if (currentView === 'terms' && !path.startsWith('/terms')) {
+      window.history.replaceState({}, '', '/terms');
+    } else if (currentView === 'privacy' && !path.startsWith('/privacy')) {
+      window.history.replaceState({}, '', '/privacy');
+    } else if (currentView === 'refund' && !path.startsWith('/refund')) {
+      window.history.replaceState({}, '', '/refund');
     } else if (currentView === 'explore' && !path.startsWith('/explore') && !path.startsWith('/products') && !path.startsWith('/dashboard')) {
       window.history.replaceState({}, '', '/explore');
     }
@@ -104,6 +114,9 @@ export default function App() {
         setAdminState('login');
       }
       else if (path.startsWith('/login')) setCurrentView('login');
+      else if (path.startsWith('/terms')) setCurrentView('terms');
+      else if (path.startsWith('/privacy')) setCurrentView('privacy');
+      else if (path.startsWith('/refund')) setCurrentView('refund');
       else if (path.startsWith('/products') || path.startsWith('/explore') || path.startsWith('/dashboard')) setCurrentView('explore');
       else setCurrentView('landing');
     };
@@ -133,7 +146,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  const navigateTo = (view: 'landing' | 'login' | 'explore' | 'admin') => {
+  const navigateTo = (view: 'landing' | 'login' | 'explore' | 'admin' | 'terms' | 'privacy' | 'refund') => {
     setCurrentView(view);
     if (view === 'admin') {
       setAdminState('login');
@@ -300,10 +313,24 @@ export default function App() {
         onNavigateLogin={() => navigateTo('login')}
         onNavigateExplore={() => navigateTo('explore')}
         onNavigateAdmin={() => navigateTo('admin')}
+        onNavigatePolicy={(pol) => navigateTo(pol)}
         isAuthenticated={!!currentUser}
         userName={currentUser?.name}
         onLogout={handleLogout}
         onProductsAddedToGlobalCatalog={(newProds) => setProducts(prev => [...newProds, ...prev])}
+      />
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // ROUTE 1.5: Policy Standalone Pages (/terms, /privacy, /refund)
+  // --------------------------------------------------------------------------
+  if (currentView === 'terms' || currentView === 'privacy' || currentView === 'refund') {
+    return (
+      <PolicyPages
+        policyType={currentView}
+        onNavigateHome={() => navigateTo('landing')}
+        onNavigatePolicy={(pol) => navigateTo(pol)}
       />
     );
   }

@@ -2152,6 +2152,377 @@ app.post(['/api/shopify/scrape', '/api/v1/shopify/scrape'], async (req, res) => 
   }
 });
 
+// ----------------------------------------------------------------------------
+// AUTO PRODUCT CRAWLER ENGINE (Job Queue, URL Discovery, AI Product Reader)
+// ----------------------------------------------------------------------------
+
+// 1. URL Discovery Agent
+app.post('/api/v1/autocrawl/discover', async (req, res) => {
+  try {
+    const { urls } = req.body;
+    let urlList: string[] = [];
+
+    if (Array.isArray(urls)) {
+      urlList = urls.map(u => String(u).trim()).filter(Boolean);
+    } else if (typeof urls === 'string') {
+      urlList = urls.split(/[\n,]+/).map(u => u.trim()).filter(Boolean);
+    }
+
+    if (urlList.length === 0) {
+      return res.status(400).json({ error: 'Please provide at least one valid website or product URL' });
+    }
+
+    const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const logs: string[] = [`🚀 [URL Discovery Agent] Initializing crawl for ${urlList.length} website URLs...` ];
+    const discoveredProductsSet = new Map<string, { url: string; sourceWebsite: string; type: 'homepage' | 'category' | 'product'; status: 'pending' }>();
+
+    for (let rawUrl of urlList) {
+      if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+        rawUrl = 'https://' + rawUrl;
+      }
+
+      try {
+        const parsed = new URL(rawUrl);
+        const sourceWebsite = parsed.hostname.replace('www.', '');
+        const path = parsed.pathname;
+
+        // Check if URL is directly a product page
+        if (path.includes('/products/') || path.includes('/p/') || path.includes('/product/') || path.includes('/item/')) {
+          const cleanProdUrl = parsed.origin + parsed.pathname.replace(/\.json$/, '');
+          discoveredProductsSet.set(cleanProdUrl, {
+            url: cleanProdUrl,
+            sourceWebsite,
+            type: 'product',
+            status: 'pending'
+          });
+          logs.push(`🎯 Direct product URL added: ${cleanProdUrl}`);
+        } else if (path.includes('/collections/') || path.includes('/category/') || path.includes('/c/')) {
+          logs.push(`📂 Scanning category page: ${rawUrl}`);
+          try {
+            const collJsonUrl = `${rawUrl.replace(/\/$/, '')}/products.json?limit=250`;
+            const cResp = await fetch(collJsonUrl, {
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+            });
+            if (cResp.ok && cResp.headers.get('content-type')?.includes('application/json')) {
+              const data: any = await cResp.json();
+              if (Array.isArray(data.products)) {
+                data.products.forEach((p: any) => {
+                  if (p.handle) {
+                    const pUrl = `${parsed.origin}/products/${p.handle}`;
+                    discoveredProductsSet.set(pUrl, {
+                      url: pUrl,
+                      sourceWebsite,
+                      type: 'product',
+                      status: 'pending'
+                    });
+                  }
+                });
+                logs.push(`  ├─ Found ${data.products.length} products in collection endpoint.`);
+              }
+            }
+          } catch (e) {}
+        } else {
+          logs.push(`🌐 Probing store homepage: ${rawUrl}`);
+          try {
+            const allProductsUrl = `${parsed.origin}/collections/all/products.json?limit=250`;
+            const hResp = await fetch(allProductsUrl, {
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+            });
+            if (hResp.ok && hResp.headers.get('content-type')?.includes('application/json')) {
+              const data: any = await hResp.json();
+              if (Array.isArray(data.products)) {
+                data.products.forEach((p: any) => {
+                  if (p.handle) {
+                    const pUrl = `${parsed.origin}/products/${p.handle}`;
+                    discoveredProductsSet.set(pUrl, {
+                      url: pUrl,
+                      sourceWebsite,
+                      type: 'product',
+                      status: 'pending'
+                    });
+                  }
+                });
+                logs.push(`  ├─ Discovered ${data.products.length} products via store index.`);
+              }
+            } else {
+              const htmlResp = await fetch(parsed.origin, {
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+              });
+              if (htmlResp.ok) {
+                const htmlText = await htmlResp.text();
+                const matches = [...htmlText.matchAll(/href=["'](\/products\/[^"'\?#]+)["']/gi)];
+                let htmlDiscovered = 0;
+                matches.forEach(m => {
+                  const pUrl = `${parsed.origin}${m[1]}`;
+                  if (!discoveredProductsSet.has(pUrl)) {
+                    discoveredProductsSet.set(pUrl, {
+                      url: pUrl,
+                      sourceWebsite,
+                      type: 'product',
+                      status: 'pending'
+                    });
+                    htmlDiscovered++;
+                  }
+                });
+                logs.push(`  ├─ Extracted ${htmlDiscovered} product links from homepage HTML.`);
+              }
+            }
+          } catch (e) {}
+        }
+      } catch (err: any) {
+        logs.push(`⚠️ Skipping invalid URL "${rawUrl}": ${err.message}`);
+      }
+    }
+
+    const discoveredProducts = Array.from(discoveredProductsSet.values());
+
+    return res.json({
+      success: true,
+      jobId,
+      websitesCount: urlList.length,
+      totalDiscovered: discoveredProducts.length,
+      discoveredProducts,
+      logs
+    });
+  } catch (error: any) {
+    console.error('Auto Crawl Discover Error:', error);
+    return res.status(500).json({ error: 'Failed to discover product URLs: ' + error.message });
+  }
+});
+
+// 2. AI Product Reader (Reads ONE product page at a time, outputs Standard JSON)
+app.post('/api/v1/autocrawl/process-product', async (req, res) => {
+  try {
+    const { productUrl, sourceWebsite, jobId } = req.body;
+    if (!productUrl || typeof productUrl !== 'string') {
+      return res.status(400).json({ error: 'productUrl is required' });
+    }
+
+    let rawUrl = productUrl.trim();
+    if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
+      rawUrl = 'https://' + rawUrl;
+    }
+
+    const parsedUrl = new URL(rawUrl);
+    const domain = sourceWebsite || parsedUrl.hostname.replace('www.', '');
+    const domainPart = domain.split('.')[0];
+    const brandName = domainPart.charAt(0).toUpperCase() + domainPart.slice(1).toLowerCase();
+
+    // 1. Fetch JSON or HTML page
+    let title = '';
+    let description = '';
+    let price = 0;
+    let mrp = 0;
+    let vendor = brandName;
+    let images: string[] = [];
+    let tags: string[] = [];
+    let rawProductData: any = null;
+
+    if (parsedUrl.pathname.includes('/products/')) {
+      const jsonUrl = `${parsedUrl.origin}${parsedUrl.pathname.replace(/\.json$/, '')}.json`;
+      try {
+        const jResp = await fetch(jsonUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+          signal: AbortSignal.timeout(5000)
+        });
+        if (jResp.ok && jResp.headers.get('content-type')?.includes('application/json')) {
+          const jData: any = await jResp.json();
+          rawProductData = jData.product || jData;
+          if (rawProductData) {
+            title = rawProductData.title || '';
+            description = (rawProductData.body_html || '').replace(/<[^>]*>/g, ' ').slice(0, 2000);
+            vendor = rawProductData.vendor || brandName;
+            tags = Array.isArray(rawProductData.tags) ? rawProductData.tags : (typeof rawProductData.tags === 'string' ? rawProductData.tags.split(',') : []);
+            
+            if (Array.isArray(rawProductData.variants) && rawProductData.variants.length > 0) {
+              price = parseFloat(rawProductData.variants[0].price) || 0;
+              mrp = parseFloat(rawProductData.variants[0].compare_at_price) || Math.round(price * 1.3);
+            }
+            if (Array.isArray(rawProductData.images)) {
+              images = rawProductData.images.map((img: any) => typeof img === 'string' ? img : img.src).filter(Boolean);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (!title) {
+      try {
+        const hResp = await fetch(rawUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+          signal: AbortSignal.timeout(6000)
+        });
+        if (hResp.ok) {
+          const htmlText = await hResp.text();
+          const ogTitleMatch = htmlText.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i);
+          title = ogTitleMatch ? ogTitleMatch[1] : '';
+
+          const ogDescMatch = htmlText.match(/<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i);
+          description = ogDescMatch ? ogDescMatch[1] : '';
+
+          const ogImgMatches = [...htmlText.matchAll(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/gi)];
+          images = ogImgMatches.map(m => m[1]).filter(Boolean);
+
+          const priceMatch = htmlText.match(/["']price["']\s*:\s*["']?([0-9.]+)/i);
+          if (priceMatch) price = parseFloat(priceMatch[1]) || 1299;
+        }
+      } catch (e) {}
+    }
+
+    if (!title) {
+      const handle = parsedUrl.pathname.split('/').filter(Boolean).pop() || 'Fashion Article';
+      title = handle.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    if (!price || price <= 0) price = 1299;
+    if (!mrp || mrp < price) mrp = Math.round(price * 1.35);
+
+    let aiParsedJSON: any = null;
+
+    if (ai) {
+      try {
+        const prompt = `
+You are an AI Product Reader and Fashion Cataloging Agent.
+Understand the product details and output a clean, standard JSON object.
+
+Input Metadata:
+- Title: "${title}"
+- Brand/Vendor: "${vendor}"
+- URL: "${rawUrl}"
+- Price: ${price} INR | MRP: ${mrp} INR
+- Tags: ${JSON.stringify(tags)}
+- Description: "${description.slice(0, 1000)}"
+- Images: ${JSON.stringify(images.slice(0, 4))}
+
+Required Output Schema:
+{
+  "source": {
+    "website": "${domain}",
+    "url": "${rawUrl}"
+  },
+  "product": {
+    "name": "${title.replace(/"/g, "'")}",
+    "brand": "${vendor.replace(/"/g, "'")}",
+    "category": "e.g. Hoodie, Kurti, Saree, T-Shirt, Dress, Cargo Pants, Jeans",
+    "subcategory": "Subcategory if applicable",
+    "gender": "Men" or "Women" or "Unisex",
+    "garment_type": "e.g. Topwear, Bottomwear, Ethnic, Outerwear",
+    "description": "Short clean product description"
+  },
+  "pricing": {
+    "price": ${price},
+    "mrp": ${mrp},
+    "discount": ${Math.round(((mrp - price) / Math.max(1, mrp)) * 100)},
+    "currency": "INR"
+  },
+  "fashion": {
+    "fabric": "Cotton / Silk / Denim / Linen / Polyester / etc.",
+    "pattern": "Solid / Printed / Floral / Striped / Zari / etc.",
+    "color": "Main color name e.g. Black, Navy Blue, Red",
+    "fit": "Boxy / Regular / Slim / Oversized / Straight / etc.",
+    "styles": ["Streetwear", "Casual", "Ethnic"],
+    "occasions": ["Everyday", "College", "Festive"]
+  },
+  "collections": ["Category tag 1", "Category tag 2"],
+  "images": {
+    "main": "${images[0] || 'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=800'}",
+    "gallery": ${JSON.stringify(images.slice(1, 6))}
+  },
+  "ai": {
+    "confidence": 0.95,
+    "model": "gemini-3.6-flash",
+    "processedAt": "${new Date().toISOString()}"
+  },
+  "crawler": {
+    "jobId": "${jobId || 'job_direct'}",
+    "status": "approved"
+  }
+}
+
+CRITICAL RULES:
+1. "gender": MUST be accurate. If Kurti, Saree, Lehenga, Women's Dress, set "Women". If Men's hoodie, Men's shirt, set "Men". Otherwise "Unisex".
+2. Output STRICT RAW JSON ONLY. Do not use markdown backticks or markdown formatting.
+`;
+
+        const geminiRes = await ai.models.generateContent({
+          model: 'gemini-3.6-flash',
+          contents: [prompt],
+          config: {
+            responseMimeType: 'application/json'
+          }
+        });
+
+        if (geminiRes.text) {
+          const cleanText = geminiRes.text.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+          aiParsedJSON = JSON.parse(cleanText);
+        }
+      } catch (geminiErr: any) {
+        console.warn('Gemini AI Product Reader notice:', geminiErr.message);
+      }
+    }
+
+    if (!aiParsedJSON) {
+      const fullText = `${title} ${description} ${tags.join(' ')}`.toLowerCase();
+      let gender: 'Men' | 'Women' | 'Unisex' = 'Unisex';
+      if (/women|female|kurti|saree|lehenga|dress|girl/i.test(fullText)) gender = 'Women';
+      else if (/men|male|boy|hoodie|shirt|cargo/i.test(fullText)) gender = 'Men';
+
+      aiParsedJSON = {
+        source: {
+          website: domain,
+          url: rawUrl
+        },
+        product: {
+          name: title,
+          brand: vendor,
+          category: tags[0] || 'Apparel',
+          subcategory: 'Fashion',
+          gender,
+          garment_type: 'Apparel',
+          description: description || `${title} by ${vendor}`
+        },
+        pricing: {
+          price,
+          mrp,
+          discount: Math.round(((mrp - price) / Math.max(1, mrp)) * 100),
+          currency: 'INR'
+        },
+        fashion: {
+          fabric: 'Cotton',
+          pattern: 'Solid',
+          color: 'Multi',
+          fit: 'Regular',
+          styles: ['Casual'],
+          occasions: ['Everyday']
+        },
+        collections: [gender, 'Apparel'],
+        images: {
+          main: images[0] || 'https://images.unsplash.com/photo-1523381210434-271e8be1f52b?w=800',
+          gallery: images.slice(1, 6)
+        },
+        ai: {
+          confidence: 0.85,
+          model: 'fallback-rules-engine',
+          processedAt: new Date().toISOString()
+        },
+        crawler: {
+          jobId: jobId || 'job_direct',
+          status: 'approved'
+        }
+      };
+    }
+
+    return res.json({
+      success: true,
+      product: aiParsedJSON
+    });
+  } catch (error: any) {
+    console.error('AI Product Reader Error:', error);
+    return res.status(500).json({ error: 'Failed to process product page: ' + error.message });
+  }
+});
+
+
 // Real-Time Gemini AI Category Verification Route
 app.post(['/api/gemini/verify-category', '/api/v1/gemini/verify-category'], async (req, res) => {
   try {

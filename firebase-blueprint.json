@@ -122,6 +122,38 @@
         "created_at": { "type": "string" }
       },
       "required": ["title", "price", "store_domain", "variant_id"]
+    },
+    "auto_products": {
+      "title": "Auto Products",
+      "description": "Products harvested automatically by AI Product Reader pipeline",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "source": { "type": "object" },
+        "product": { "type": "object" },
+        "pricing": { "type": "object" },
+        "fashion": { "type": "object" },
+        "collections": { "type": "array" },
+        "images": { "type": "object" },
+        "ai": { "type": "object" },
+        "crawler": { "type": "object" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["source", "product", "pricing", "images"]
+    },
+    "crawl_jobs": {
+      "title": "Crawl Jobs",
+      "description": "Job tracker for multi-URL auto product crawler queue",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "status": { "type": "string" },
+        "websitesCount": { "type": "number" },
+        "productsFound": { "type": "number" },
+        "productsProcessed": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "status"]
     }
   },
   "firestore": {
@@ -144,6 +176,15 @@
     "shopify_products": {
       "schema": "shopify_products",
       "description": "Harvested Shopify products collection"
+    },
+    "auto_products": {
+      "schema": "auto_products",
+      "description": "Auto crawler harvested product catalog"
+    },
+    "crawl_jobs": {
+      "schema": "crawl_jobs",
+      "description": "Auto crawler job tracker queue"
     }
   }
 }
+
