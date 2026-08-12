@@ -70,15 +70,13 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // Navigation Route State ('landing' | 'login' | 'explore' | 'admin' | 'terms' | 'privacy' | 'refund')
-  const [currentView, setCurrentView] = useState<'landing' | 'login' | 'explore' | 'admin' | 'terms' | 'privacy' | 'refund'>(() => {
+  // Navigation Route State ('landing' | 'admin' | 'terms' | 'privacy' | 'refund')
+  const [currentView, setCurrentView] = useState<'landing' | 'admin' | 'terms' | 'privacy' | 'refund'>(() => {
     const path = window.location.pathname.toLowerCase();
     if (path.startsWith('/admin')) return 'admin';
-    if (path.startsWith('/login')) return 'login';
     if (path.startsWith('/terms')) return 'terms';
     if (path.startsWith('/privacy')) return 'privacy';
     if (path.startsWith('/refund')) return 'refund';
-    if (path.startsWith('/products') || path.startsWith('/explore') || path.startsWith('/dashboard')) return 'explore';
     return 'landing';
   });
 
@@ -92,16 +90,12 @@ export default function App() {
       window.history.replaceState({}, '', '/');
     } else if (currentView === 'admin' && !path.startsWith('/admin')) {
       window.history.replaceState({}, '', '/admin');
-    } else if (currentView === 'login' && !path.startsWith('/login')) {
-      window.history.replaceState({}, '', '/login');
     } else if (currentView === 'terms' && !path.startsWith('/terms')) {
       window.history.replaceState({}, '', '/terms');
     } else if (currentView === 'privacy' && !path.startsWith('/privacy')) {
       window.history.replaceState({}, '', '/privacy');
     } else if (currentView === 'refund' && !path.startsWith('/refund')) {
       window.history.replaceState({}, '', '/refund');
-    } else if (currentView === 'explore' && !path.startsWith('/explore') && !path.startsWith('/products') && !path.startsWith('/dashboard')) {
-      window.history.replaceState({}, '', '/explore');
     }
   }, [currentView]);
 
@@ -113,11 +107,9 @@ export default function App() {
         setCurrentView('admin');
         setAdminState('login');
       }
-      else if (path.startsWith('/login')) setCurrentView('login');
       else if (path.startsWith('/terms')) setCurrentView('terms');
       else if (path.startsWith('/privacy')) setCurrentView('privacy');
       else if (path.startsWith('/refund')) setCurrentView('refund');
-      else if (path.startsWith('/products') || path.startsWith('/explore') || path.startsWith('/dashboard')) setCurrentView('explore');
       else setCurrentView('landing');
     };
 
@@ -146,12 +138,12 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  const navigateTo = (view: 'landing' | 'login' | 'explore' | 'admin' | 'terms' | 'privacy' | 'refund') => {
+  const navigateTo = (view: 'landing' | 'admin' | 'terms' | 'privacy' | 'refund') => {
     setCurrentView(view);
     if (view === 'admin') {
       setAdminState('login');
     }
-    const targetPath = view === 'landing' ? '/' : view === 'explore' ? '/explore' : `/${view}`;
+    const targetPath = view === 'landing' ? '/' : `/${view}`;
     if (window.location.pathname !== targetPath) {
       window.history.pushState({}, '', targetPath);
     }
@@ -168,7 +160,7 @@ export default function App() {
     if (session.email === 'imamir760@gmail.com') {
       navigateTo('admin');
     } else {
-      navigateTo('explore');
+      navigateTo('landing');
     }
   };
 
@@ -305,25 +297,7 @@ export default function App() {
   }, [products, wishlistIds]);
 
   // --------------------------------------------------------------------------
-  // ROUTE 1: Landing Page (/)
-  // --------------------------------------------------------------------------
-  if (currentView === 'landing') {
-    return (
-      <LandingPage
-        onNavigateLogin={() => navigateTo('login')}
-        onNavigateExplore={() => navigateTo('explore')}
-        onNavigateAdmin={() => navigateTo('admin')}
-        onNavigatePolicy={(pol) => navigateTo(pol)}
-        isAuthenticated={!!currentUser}
-        userName={currentUser?.name}
-        onLogout={handleLogout}
-        onProductsAddedToGlobalCatalog={(newProds) => setProducts(prev => [...newProds, ...prev])}
-      />
-    );
-  }
-
-  // --------------------------------------------------------------------------
-  // ROUTE 1.5: Policy Standalone Pages (/terms, /privacy, /refund)
+  // ROUTE 1: Policy Standalone Pages (/terms, /privacy, /refund)
   // --------------------------------------------------------------------------
   if (currentView === 'terms' || currentView === 'privacy' || currentView === 'refund') {
     return (
@@ -336,19 +310,7 @@ export default function App() {
   }
 
   // --------------------------------------------------------------------------
-  // ROUTE 2: /login View
-  // --------------------------------------------------------------------------
-  if (currentView === 'login') {
-    return (
-      <LoginPage
-        onLoginSuccess={handleLoginSuccess}
-        onNavigateHome={() => navigateTo('landing')}
-      />
-    );
-  }
-
-  // --------------------------------------------------------------------------
-  // ROUTE 3: /admin Guard & Dashboard View
+  // ROUTE 2: /admin Guard & Dashboard View
   // --------------------------------------------------------------------------
   if (currentView === 'admin') {
     // 1. Authorized Admin logged in & verified -> Render Admin Dashboard
@@ -398,133 +360,18 @@ export default function App() {
   }
 
   // --------------------------------------------------------------------------
-  // ROUTE 4: Protected Explore / Dashboard View (/explore)
+  // ROUTE 3: Default Index Page (/)
   // --------------------------------------------------------------------------
-  // Authentication Guard: If user is not authenticated, redirect to /login
-  if (!currentUser) {
-    return (
-      <LoginPage
-        onLoginSuccess={handleLoginSuccess}
-        onNavigateHome={() => navigateTo('landing')}
-        initialErrorMessage="Authentication required. Please sign in with Google to access ShopScoper."
-      />
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 selection:bg-red-600 selection:text-white font-sans antialiased relative overflow-x-hidden">
-      
-      {/* Dynamic Background Mesh Gradients */}
-      <div className="fixed inset-0 pointer-events-none z-0">
-        <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-purple-500/5 rounded-full blur-[140px]" />
-        <div className="absolute top-1/3 right-1/4 w-[600px] h-[600px] bg-red-500/5 rounded-full blur-[160px]" />
-      </div>
-
-      {/* Main Search Engine & Discovery Screen */}
-      <GeminiSearchLanding
-        products={products}
-        wishlistIds={wishlistIds}
-        defaultAddress={defaultAddress}
-        wishlistCount={wishlistProducts.length}
-        totalSaved={totalSaved}
-        currentUser={currentUser}
-        onLogout={handleLogout}
-        onNavigateAdmin={() => navigateTo('admin')}
-        onToggleWishlist={handleToggleWishlist}
-        onExpressBuy={handleOpenExpressBuy}
-        onQuickView={handleOpenQuickView}
-        onOpenWishlist={() => setIsWishlistOpen(true)}
-        onOpenAddressVault={() => setIsAddressVaultOpen(true)}
-        onOpenGptTryOn={handleOpenGptTryOn}
-      />
-
-      {/* Slide-Over Drawers & Modals */}
-      <GptTryOnStudio
-        isOpen={isGptTryOnOpen}
-        onClose={() => setIsGptTryOnOpen(false)}
-        garmentProduct={gptTryOnGarment.product}
-        garmentImageUrl={gptTryOnGarment.imageUrl}
-      />
-      <ExpressDrawer
-        isOpen={isExpressDrawerOpen}
-        onClose={() => setIsExpressDrawerOpen(false)}
-        product={activeExpressProduct}
-        userAddress={defaultAddress}
-        onOpenAddressVault={() => setIsAddressVaultOpen(true)}
-        onHandoffSuccess={handleHandoffSuccess}
-      />
-
-      <WishlistDrawer
-        isOpen={isWishlistOpen}
-        onClose={() => setIsWishlistOpen(false)}
-        wishlistProducts={wishlistProducts}
-        onRemoveFromWishlist={(id) => {
-          setWishlistIds((prev) => prev.filter((i) => String(i) !== String(id)));
-          toggleWishlistInDb(effectiveUserId, id, true);
-        }}
-        onExpressBuy={handleOpenExpressBuy}
-        onTryOn={(p) => {
-          setIsWishlistOpen(false);
-          handleOpenGptTryOn(p);
-        }}
-      />
-
-      <OmniSearchModal
-        isOpen={isSearchOpen}
-        onClose={() => setIsSearchOpen(false)}
-        products={products}
-        onSelectProduct={handleOpenQuickView}
-        onSelectCategory={(cat) => setSelectedCategory(cat)}
-      />
-
-      <QuickViewModal
-        product={activeQuickViewProduct}
-        isOpen={isQuickViewOpen}
-        onClose={() => setIsQuickViewOpen(false)}
-        isWishlisted={activeQuickViewProduct ? wishlistIds.some((id) => String(id) === String(activeQuickViewProduct.id)) : false}
-        onToggleWishlist={handleToggleWishlist}
-        onExpressBuy={handleOpenExpressBuy}
-        onTryOn={(p) => {
-          setIsQuickViewOpen(false);
-          handleOpenGptTryOn(p);
-        }}
-        wishlistCount={wishlistProducts.length}
-        onOpenSearch={() => {
-          setIsQuickViewOpen(false);
-          setIsSearchOpen(true);
-        }}
-        onOpenWishlist={() => {
-          setIsQuickViewOpen(false);
-          setIsWishlistOpen(true);
-        }}
-      />
-
-      <AddressVaultModal
-        isOpen={isAddressVaultOpen}
-        onClose={() => setIsAddressVaultOpen(false)}
-        addresses={addresses}
-        defaultAddress={defaultAddress}
-        onSelectDefaultAddress={(addr) => {
-          setDefaultAddress(addr);
-          setIsAddressVaultOpen(false);
-        }}
-        onAddNewAddress={(newAddr) => {
-          setAddresses((prev) => [newAddr, ...prev]);
-          setDefaultAddress(newAddr);
-        }}
-      />
-
-      <HandoffSuccessModal
-        isOpen={isSuccessModalOpen}
-        onClose={() => setIsSuccessModalOpen(false)}
-        orderInfo={lastOrderInfo}
-      />
-
-      <SavingsAnalyticsModal
-        isOpen={isSavingsAnalyticsOpen}
-        onClose={() => setIsSavingsAnalyticsOpen(false)}
-      />
-
-    </div>
+    <LandingPage
+      onNavigateLogin={() => navigateTo('landing')}
+      onNavigateExplore={() => navigateTo('landing')}
+      onNavigateAdmin={() => navigateTo('admin')}
+      onNavigatePolicy={(pol) => navigateTo(pol)}
+      isAuthenticated={!!currentUser}
+      userName={currentUser?.name}
+      onLogout={handleLogout}
+      onProductsAddedToGlobalCatalog={(newProds) => setProducts(prev => [...newProds, ...prev])}
+    />
   );
 }

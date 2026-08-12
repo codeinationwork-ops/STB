@@ -62,11 +62,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   };
 
   const handleDownloadClick = () => {
-    if (isAuthenticated) {
-      onNavigateExplore();
-    } else {
-      onNavigateLogin();
-    }
+    setPartnerModalOpen(true);
   };
 
   return (
@@ -101,23 +97,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2.5 shrink-0">
-          {isAuthenticated ? (
-            <button
-              onClick={onNavigateExplore}
-              className="h-[38px] sm:h-[42px] px-4 sm:px-5 rounded-full bg-slate-900 hover:bg-slate-800 text-white font-mono font-bold text-xs sm:text-sm shadow-md flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-            >
-              <span>Tailor Dashboard</span>
-              <ArrowRight className="w-4 h-4 shrink-0 text-amber-400" />
-            </button>
-          ) : (
-            <button
-              onClick={onNavigateLogin}
-              className="h-[38px] sm:h-[42px] px-4 sm:px-5 rounded-full bg-slate-900 hover:bg-slate-800 text-white font-mono font-bold text-xs sm:text-sm shadow-md flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-            >
-              <span>Partner Sign In</span>
-              <ArrowRight className="w-4 h-4 shrink-0 text-amber-400" />
-            </button>
-          )}
+          <button
+            onClick={() => setPartnerModalOpen(true)}
+            className="h-[38px] sm:h-[42px] px-4 sm:px-5 rounded-full bg-slate-900 hover:bg-slate-800 text-white font-mono font-bold text-xs sm:text-sm shadow-md flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+          >
+            <span>Partner Onboarding</span>
+            <ArrowRight className="w-4 h-4 shrink-0 text-amber-400" />
+          </button>
         </div>
       </header>
 
