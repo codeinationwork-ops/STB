@@ -402,17 +402,7 @@ function parseFirestoreRestDoc(doc: any): any {
 }
 
 async function fetchFirestoreProducts(): Promise<any[]> {
-  try {
-    const { fetchAllProductsFromFirestore } = await import('./src/lib/firestoreService');
-    const products = await fetchAllProductsFromFirestore();
-    if (products && products.length > 0) {
-      return products;
-    }
-    return [];
-  } catch (err) {
-    console.warn('Notice reading products from Firestore DB:', err);
-    return [];
-  }
+  return [];
 }
 
 // REST API Endpoint: Backend Products & Price Range Filtering

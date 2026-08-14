@@ -1,336 +1,184 @@
-export interface ProductSpec {
-  label: string;
-  value: string;
-}
+export type GarmentCategory =
+  | 'Formal Shirt'
+  | 'Kurta Pajama'
+  | 'Blouse'
+  | 'Anarkali Suit'
+  | 'Sherwani'
+  | 'Lehenga'
+  | 'Pant / Trouser'
+  | 'Suit (Coat + Pant)'
+  | 'Alterations'
+  | 'Other';
 
-export interface ProductColor {
-  name: string;
-  hex: string;
-}
+export type OrderStatus =
+  | 'New / Cutting'
+  | 'Assigned'
+  | 'Stitching in Progress'
+  | 'Trial'
+  | 'Completed'
+  | 'Delivered';
 
-// 1. brands Collection Schema
-export interface BrandCrawlerConfig {
-  products_json_url?: string;
-  sitemap_url?: string;
-  crawl_frequency_hours: number;
-  last_crawled_at: string;
-  status: 'ACTIVE' | 'PAUSED' | 'FAILED';
-}
+export type PaymentMode = 'Cash' | 'UPI (Scan & Pay)' | 'Other (Card/Wallet)';
 
-export interface BrandSubscription {
-  tier: string;
-  is_featured: boolean;
-  monthly_fee_inr: number;
-}
-
-export interface BrandDoc {
-  _id: string;
-  brand_name: string;
-  slug: string;
-  domain: string;
-  official_url: string;
-  logo_url: string;
-  category_tags: string[];
-  platform_type: string;
-  crawler_config: BrandCrawlerConfig;
-  subscription: BrandSubscription;
-  created_at: string;
-}
-
-// 2. categories Collection Schema
-export interface SubCategoryItem {
+export interface PaymentRecord {
   id: string;
-  name: string;
-  slug: string;
+  date: string;
+  amount: number;
+  type: 'Advance' | 'Balance' | 'Partial';
+  mode: PaymentMode;
+  note?: string;
 }
 
-export interface CategoryDoc {
-  _id: string;
-  name: string;
-  slug: string;
-  parent_id: string | null;
-  subcategories: SubCategoryItem[];
-  is_active: boolean;
+export type MeasurementCategory = 'Upper Body' | 'Lower Body' | 'Sleeves' | 'Neck & Others';
+
+export type GenderCategory = 'Male' | 'Female';
+
+export interface MeasurementMap {
+  // Upper Body
+  chest?: string;
+  shoulder?: string;
+  frontLength?: string;
+  backLength?: string;
+  waist?: string;
+  stomach?: string;
+  hip?: string;
+  armhole?: string;
+  // Lower Body
+  pantLength?: string;
+  inseam?: string;
+  thigh?: string;
+  knee?: string;
+  bottomHem?: string;
+  // Sleeves & Neck
+  neck?: string;
+  bicep?: string;
+  wrist?: string;
+  sleeveLength?: string;
+  // Others
+  crossBack?: string;
+  frontNeckDepth?: string;
+  backNeckDepth?: string;
+  customNotes?: string;
+  [key: string]: string | undefined;
 }
 
-// 3. products Collection Schema (Core Master Collection)
-export interface ProductPricing {
-  direct_price: number;
-  marketplace_price: number;
-  savings_amount: number;
-  savings_percentage: number;
-  currency: string;
-}
-
-export interface ProductMedia {
-  primary_image: string;
-  gallery_images: string[];
-}
-
-export interface ProductVariantDoc {
-  variant_id: string;
-  size?: string;
-  color?: string;
-  sku?: string;
-  price: number;
-  in_stock: boolean;
-}
-
-export interface ProductMetrics {
-  click_count: number;
-  wishlist_count: number;
-  rating: number;
-  reviews_count: number;
-}
-
-export interface ProductStatus {
-  is_active: boolean;
-  in_stock: boolean;
-  last_crawled_at: string;
-}
-
-export interface ProductDoc {
-  _id: string;
-  brand_id: string;
-  brand_name: string;
-  title: string;
-  slug: string;
-  category_id: string;
-  category_name: string;
-  description: string;
-  canonical_product_url: string;
-  outbound_checkout_url: string;
-  pricing: ProductPricing;
-  media: ProductMedia;
-  normalized_specs: ProductSpec[];
-  variants: ProductVariantDoc[];
-  metrics: ProductMetrics;
-  status: ProductStatus;
-  created_at: string;
-  updated_at: string;
-}
-
-// 4. crawl_logs Collection Schema
-export interface CrawlLogDoc {
-  _id: string;
-  brand_id: string;
-  started_at: string;
-  completed_at: string;
-  products_found: number;
-  products_upserted: number;
-  errors_encountered: number;
-  status: 'SUCCESS' | 'PARTIAL' | 'FAILED';
-}
-
-// 5. search_logs Collection Schema
-export interface SearchLogDoc {
-  _id: string;
-  user_session_id: string;
-  raw_query: string;
-  ai_parsed_intent: {
-    category: string;
-    max_price?: number | null;
-    keywords: string[];
-  };
-  results_returned: number;
-  clicked_product_id?: string;
-  timestamp: string;
-}
-
-// UI Product representation (mapped from ProductDoc)
-export interface Product {
+export interface TailorOrder {
   id: string;
-  name: string;
-  brand: string;
-  brandLogo?: string;
-  category: string;
-  directPrice: number;
-  marketplacePrice: number;
-  marketplaceName: string;
-  images: string[];
-  specs: ProductSpec[];
-  stockLeft: number;
-  rating: number;
-  reviewsCount: number;
-  trendingScore: number;
-  couponCode?: string;
-  couponDiscount?: number;
-  officialUrl: string;
-  description: string;
-  lastUpdated?: string;
-  sizes?: string[];
-  colors?: ProductColor[];
-  badge?: string;
-  priceDropHistory?: { date: string; directPrice: number; marketplacePrice: number }[];
-  gender?: 'Men' | 'Women' | 'Unisex' | 'N/A';
-  articleCollection?: string;
-  // Optional Shopify Direct Checkout & Pricing Sync attributes
-  price?: number;
-  variant_id?: string | number;
-  store_domain?: string;
-  cart_permalink?: string;
-  compare_at_price?: number;
-  discount_percentage?: number;
-  price_dropped?: boolean;
-  previous_price?: number;
-  active_promo_code?: string;
-  promo_banner_found?: string;
-  // Raw product doc attachment
-  rawDoc?: ProductDoc;
+  customerId: string;
+  customerName: string;
+  customerPhone: string;
+  isRepeatCustomer: boolean;
+  garmentType: GarmentCategory | string;
+  orderCategory?: 'New Stitch' | 'Alteration';
+  subTypeStyle: string;
+  genderCategory: GenderCategory;
+  measurementMode: 'manual' | 'receipt';
+  measurements: MeasurementMap;
+  receiptImageUrl: string | null;
+  referenceGarmentUrl?: string | null;
+  specialNotes: string;
+  voiceNoteUrl: string | null;
+  voiceNoteDurationSec: number;
+  fabricPhotos: string[];
+  stitchedPhotos?: string[];
+  deliveredDate?: string;
+  totalAmount: number;
+  advancePaid: number;
+  balanceDue: number;
+  paymentMode: PaymentMode;
+  paymentHistory: PaymentRecord[];
+  status: OrderStatus;
+  createdDate: string;
+  createdTime: string;
+  createdBy: string;
+  dueDate: string;
+  dueTime: string;
+  assignedTailor: string;
+  estimatedHours: number;
+  offerMessage: string;
+  isOverdue: boolean;
+  daysOverdue: number;
+  isArchived: boolean;
+  updatedAt: string;
 }
 
-export interface ShopifyStore {
+export interface TailorCustomer {
   id: string;
-  store_domain: string;
-  store_name: string;
-  api_key?: string;
-  access_token?: string;
-  status: 'active' | 'crawling' | 'error' | 'idle';
-  total_products: number;
-  last_scraped_at?: string;
-  created_at: string;
-  discount_code?: string;
-  notes?: string;
-}
-
-export interface ShopifyProduct {
-  id: string;
-  variant_id: string | number;
-  title: string;
-  description: string;
-  category: string;
-  images: string[];
-  price: number;
-  compare_at_price?: number | null;
-  discount_percentage: number;
-  store_domain: string;
-  cart_permalink: string;
-  vendor?: string;
-  gender?: 'Men' | 'Women' | 'Unisex' | 'N/A';
-  created_at?: string;
-  discount_code?: string;
-  price_dropped?: boolean;
-  previous_price?: number;
-  active_promo_code?: string;
-  promo_banner_found?: string;
-}
-
-export interface CategoryItem {
-  id: string;
-  name: string;
-  image: string;
-  storeCount: number;
-  description: string;
-  tag: string;
-  popularBrands: string[];
-}
-
-export interface UserAddress {
-  id: string;
-  label: string;
   name: string;
   phone: string;
-  street: string;
-  city: string;
-  state: string;
-  pincode: string;
-  isDefault: boolean;
+  isRepeat: boolean;
+  ordersCount: number;
+  lastOrderDate: string;
+  totalSpent: number;
+  gender: GenderCategory;
+  measurements: MeasurementMap;
+  notes?: string;
+  createdAt: string;
 }
 
-export interface CommunitySavings {
+export interface StaffTailor {
   id: string;
-  userHandle: string;
-  productName: string;
-  brand: string;
-  amountSaved: number;
-  timeAgo: string;
-  userAvatar: string;
+  name: string;
+  phone: string;
+  role: 'Owner' | 'Tailor';
+  initials: string;
+  activeOrdersCount: number;
 }
 
-export interface SavingsChartPoint {
-  month: string;
-  savings: number;
-  orders: number;
+export interface ShopProfile {
+  shopName: string;
+  ownerName: string;
+  phoneNumber: string;
+  address: string;
+  googleMapUrl?: string;
+  upiId: string;
+  upiQrCodeUrl: string;
+  gpayPhonePeNumber: string;
+  lastSyncedTimestamp: string;
+}
+
+export interface DailyRevenuePoint {
+  date: string;
+  dayLabel: string;
+  advance: number;
+  balance: number;
+}
+
+export interface TopServiceMetric {
+  name: string;
+  count: number;
+  revenue: number;
+  percentage: number;
+}
+
+export interface PaymentModeBreakdown {
+  name: string;
+  amount: number;
+  percentage: number;
+}
+
+export interface RevenueAnalytics {
+  totalRevenue: number;
+  advanceReceived: number;
+  balanceReceived: number;
+  ordersCompleted: number;
+  revenueGrowthPercent: number;
+  advanceGrowthPercent: number;
+  balanceGrowthPercent: number;
+  ordersGrowthCount: number;
+  pendingCollections: number;
+  pendingOrdersCount: number;
+  dailyTrend: DailyRevenuePoint[];
+  topServices: TopServiceMetric[];
+  paymentModes: PaymentModeBreakdown[];
 }
 
 export interface UserSession {
   email: string;
   name: string;
   role: 'admin' | 'user';
+  phone?: string;
   avatar?: string;
 }
 
-// Auto Product Crawler System Types (Firestore auto_products & crawl_jobs)
-export interface AutoProductDoc {
-  id: string;
-  source: {
-    website: string;
-    url: string;
-  };
-  product: {
-    name: string;
-    brand: string;
-    category: string;
-    subcategory?: string;
-    gender: 'Men' | 'Women' | 'Unisex' | string;
-    garment_type?: string;
-    description?: string;
-  };
-  pricing: {
-    price: number;
-    mrp: number;
-    discount: number;
-    currency: string;
-  };
-  fashion: {
-    fabric?: string;
-    pattern?: string;
-    color?: string;
-    fit?: string;
-    styles: string[];
-    occasions: string[];
-    aesthetics?: string[];
-    fashion_tags?: string[];
-  };
-  collections: string[];
-  images: {
-    main: string;
-    gallery: string[];
-  };
-  ai: {
-    confidence: number;
-    model: string;
-    processedAt: string;
-    visual_description?: string;
-  };
-  crawler: {
-    jobId: string;
-    status: 'pending' | 'processing' | 'completed' | 'failed' | 'approved' | 'needs_review';
-    errorMessage?: string;
-  };
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CrawlJobDoc {
-  id: string;
-  status: 'pending' | 'running' | 'paused' | 'completed' | 'failed';
-  websitesCount: number;
-  websitesList: string[];
-  productsFound: number;
-  productsProcessed: number;
-  productsSuccess: number;
-  productsFailed: number;
-  discoveredUrls?: Array<{
-    url: string;
-    sourceWebsite: string;
-    type: 'homepage' | 'category' | 'product';
-    status: 'pending' | 'processing' | 'completed' | 'failed' | 'needs_review';
-    errorMessage?: string;
-    processedAt?: string;
-  }>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-
+export type CRMTab = 'dashboard' | 'customers' | 'orders' | 'revenue' | 'more';
