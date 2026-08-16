@@ -1,5 +1,5 @@
 /**
- * Centralized Phone & WhatsApp Utilities for SilaiHub CRM
+ * Centralized Phone & WhatsApp Utilities for ShopScopers CRM
  * Prevents double +91 country codes and enforces exact 10-digit mobile numbers.
  */
 

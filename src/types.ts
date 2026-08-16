@@ -181,4 +181,12 @@ export interface UserSession {
   avatar?: string;
 }
 
+export interface AuthSessionState {
+  isAuthenticated: boolean;
+  phoneNumber: string;
+  loginTimestamp: string;
+  shopName?: string;
+  ownerName?: string;
+}
+
 export type CRMTab = 'dashboard' | 'customers' | 'orders' | 'revenue' | 'more';

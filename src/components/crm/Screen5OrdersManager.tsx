@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Package,
   AlertTriangle,
@@ -27,6 +27,12 @@ import {
   Camera,
   ShoppingBag,
   X,
+  FileText,
+  Mic,
+  Play,
+  Pause,
+  Printer,
+  Sparkles,
 } from 'lucide-react';
 import {
   TailorOrder,
@@ -35,7 +41,6 @@ import {
   PaymentMode,
   StaffTailor,
 } from '../../types';
-import { OrderStatusTracker } from './OrderStatusTracker';
 import { OrderCompletedModal } from './OrderCompletedModal';
 import { OrderDeliveryModal } from './OrderDeliveryModal';
 import {
@@ -104,8 +109,13 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
   // Status Change Workflow Modals
   const [completedModalOrder, setCompletedModalOrder] = useState<TailorOrder | null>(null);
   const [deliveryModalOrder, setDeliveryModalOrder] = useState<TailorOrder | null>(null);
+  const [receiptModalOrder, setReceiptModalOrder] = useState<TailorOrder | null>(null);
+  const [slipModalOrder, setSlipModalOrder] = useState<TailorOrder | null>(null);
   const [expandedPhotoUrl, setExpandedPhotoUrl] = useState<string | null>(null);
   const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
+  const [openCardMenuId, setOpenCardMenuId] = useState<string | null>(null);
+  const [playingVoiceOrderId, setPlayingVoiceOrderId] = useState<string | null>(null);
+  const audioPlaybackRef = useRef<HTMLAudioElement | null>(null);
 
   // Active vs Archived orders
   const activeOrders = useMemo(() => orders.filter((o) => !o.isArchived), [orders]);
@@ -206,72 +216,63 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
     return tabFilteredOrders.reduce((sum, o) => sum + (o.balanceDue || 0), 0);
   }, [tabFilteredOrders]);
 
-  // WhatsApp reminder generator
-  const handleSendReminder = (order: TailorOrder) => {
-    let msg = `Hello ${order.customerName}! Greetings from ${shopProfile?.shopName || 'Royal Tailors'}. `;
-    if (order.isOverdue) {
-      msg += `Your ${order.garmentType} (Order #${order.id}) is ready for trial/collection. Please visit our shop at your earliest convenience. Balance Due: ₹${order.balanceDue}.`;
-    } else if (order.status === 'Completed' || order.status === 'Delivered') {
-      msg += `Your ${order.garmentType} (Order #${order.id}) is completely ready! Balance Due: ₹${order.balanceDue}. Thank you for choosing us!`;
-    } else {
-      msg += `Update on your ${order.garmentType} (Order #${order.id}): Status is "${order.status}". Promised Due Date: ${order.dueDate}.`;
-    }
-
-    const waUrl = getWhatsAppUrl(order.customerPhone, msg);
-    window.open(waUrl, '_blank');
-  };
-
-  // Status badge renderer
-  const renderStatusBadge = (order: TailorOrder) => {
-    if (order.isOverdue) {
-      return (
-        <span className="px-2.5 py-1 rounded-lg bg-rose-100 text-rose-900 text-xs font-black border border-rose-300 flex items-center gap-1 shadow-2xs">
-          🔥 {order.daysOverdue}d Overdue
-        </span>
-      );
-    }
-
-    switch (order.status) {
+  const getStageIndex = (status: OrderStatus): number => {
+    switch (status) {
       case 'New / Cutting':
-        return (
-          <span className="px-2.5 py-1 rounded-lg text-xs font-black bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 shadow-2xs">
-            <span className="w-2 h-2 rounded-full bg-amber-500 inline-block animate-pulse" />
-            <span>1. Received & Cutting</span>
-          </span>
-        );
+        return 0;
       case 'Assigned':
-        return (
-          <span className="px-2.5 py-1 rounded-lg text-xs font-black bg-blue-100 text-blue-900 border border-blue-300 flex items-center gap-1 shadow-2xs">
-            <span className="w-2 h-2 rounded-full bg-blue-600 inline-block" />
-            <span>2. Assigned</span>
-          </span>
-        );
+        return 1;
       case 'Stitching in Progress':
       case 'Trial':
-        return (
-          <span className="px-2.5 py-1 rounded-lg text-xs font-black bg-indigo-100 text-indigo-950 border border-indigo-300 flex items-center gap-1 shadow-2xs">
-            <span className="w-2 h-2 rounded-full bg-indigo-600 inline-block animate-ping" />
-            <span>3. Stitching in Progress</span>
-          </span>
-        );
+        return 2;
       case 'Completed':
-        return (
-          <span className="px-2.5 py-1 rounded-lg text-xs font-black bg-emerald-100 text-emerald-950 border border-emerald-300 flex items-center gap-1 shadow-2xs">
-            <span className="w-2 h-2 rounded-full bg-emerald-600 inline-block" />
-            <span>4. Ready for Pickup</span>
-          </span>
-        );
+        return 3;
       case 'Delivered':
-        return (
-          <span className="px-2.5 py-1 rounded-lg text-xs font-black bg-[#0B4636]/10 text-[#0B4636] border border-[#0B4636]/30 flex items-center gap-1 shadow-2xs">
-            <Check className="w-3.5 h-3.5 text-[#0B4636]" />
-            <span>5. Delivered & Settled</span>
-          </span>
-        );
+        return 4;
       default:
-        return null;
+        return 0;
     }
   };
+
+  const handleToggleVoicePlay = (order: TailorOrder, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!order.voiceNoteUrl) return;
+
+    if (playingVoiceOrderId === order.id) {
+      if (audioPlaybackRef.current) {
+        audioPlaybackRef.current.pause();
+        audioPlaybackRef.current = null;
+      }
+      setPlayingVoiceOrderId(null);
+    } else {
+      if (audioPlaybackRef.current) {
+        audioPlaybackRef.current.pause();
+      }
+      const audio = new Audio(order.voiceNoteUrl);
+      audioPlaybackRef.current = audio;
+      setPlayingVoiceOrderId(order.id);
+      audio.play().catch((err) => {
+        console.warn('Audio playback not allowed or failed:', err);
+      });
+      audio.onended = () => {
+        setPlayingVoiceOrderId(null);
+        audioPlaybackRef.current = null;
+      };
+      audio.onerror = () => {
+        setPlayingVoiceOrderId(null);
+        audioPlaybackRef.current = null;
+      };
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (audioPlaybackRef.current) {
+        audioPlaybackRef.current.pause();
+        audioPlaybackRef.current = null;
+      }
+    };
+  }, []);
 
   const handleStatusChangeRequest = (order: TailorOrder, targetStatus: OrderStatus) => {
     if (targetStatus === 'Assigned') {
@@ -604,8 +605,8 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
           </div>
         </div>
 
-        {/* ================= ORDER CARDS LIST ================= */}
-        <div className="space-y-3">
+        {/* ================= ORDER CARDS LIST (DASHBOARD-ALIGNED RICH COLOR THEMES) ================= */}
+        <div className="space-y-3.5">
           {sortedOrders.length === 0 ? (
             <div className="bg-white rounded-3xl p-10 text-center border border-slate-200 shadow-sm space-y-3">
               <div className="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto shadow-inner">
@@ -633,128 +634,368 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
             </div>
           ) : (
             sortedOrders.map((order) => {
-              const isExtending = extendingOrderId === order.id;
               const hasStitchedPhotos = order.stitchedPhotos && order.stitchedPhotos.length > 0;
+              const isUnassigned =
+                !order.assignedTailor ||
+                order.assignedTailor === 'Unassigned' ||
+                order.assignedTailor === 'Not Assigned';
+              const currentStageIdx = getStageIndex(order.status);
+              const isCardMenuOpen = openCardMenuId === order.id;
+              const isVoicePlaying = playingVoiceOrderId === order.id;
+
+              // Card background tint based on category & status matching dashboard
+              const cardBgStyle = order.isOverdue
+                ? 'bg-gradient-to-br from-[#FFF1F2] via-[#FFF8F8] to-[#FFE4E6] border-rose-300 ring-1 ring-rose-300/70 shadow-sm'
+                : order.orderCategory === 'Alteration' || order.orderCategory === 'Repair'
+                ? 'bg-gradient-to-br from-[#FAF5FF] via-[#FDFBFE] to-[#F3E8FF]/80 border-fuchsia-200/90 hover:border-fuchsia-300 hover:shadow-md'
+                : order.status === 'Completed' || order.status === 'Delivered'
+                ? 'bg-gradient-to-br from-[#F0FDF4] via-[#F9FDFB] to-[#DCFCE7]/70 border-emerald-200/90 hover:border-emerald-300 hover:shadow-md'
+                : order.status === 'Stitching in Progress'
+                ? 'bg-gradient-to-br from-[#EEF2FF] via-[#F8FAFF] to-[#E0E7FF]/80 border-indigo-200/90 hover:border-indigo-300 hover:shadow-md'
+                : 'bg-gradient-to-br from-[#F0FDF9] via-[#FAFCFB] to-[#E2F7EE]/70 border-teal-200/90 hover:border-teal-300 hover:shadow-md';
 
               return (
                 <div
                   key={order.id}
-                  className={`bg-white rounded-3xl p-4 sm:p-5 border transition-all space-y-3.5 shadow-sm hover:shadow-md relative overflow-hidden ${
-                    order.isOverdue
-                      ? 'border-rose-300 ring-1 ring-rose-200'
-                      : 'border-slate-200 hover:border-slate-300'
-                  }`}
+                  className={`rounded-xl p-2.5 sm:p-3 border transition-all space-y-1.5 shadow-2xs ${cardBgStyle}`}
                 >
-                  {/* Top Color Urgency Indicator Strip */}
-                  {order.isOverdue && <div className="absolute top-0 left-0 right-0 h-1.5 bg-rose-500" />}
-
-                  {/* Header Row: Copyable ID, Badges, Category, Due Pill & Financial Breakdown */}
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-1.5 flex-wrap">
+                  {/* Top Header Row of Card */}
+                  <div className="flex items-center justify-between gap-1.5 flex-wrap border-b border-slate-200/50 pb-1.5">
+                    {/* Left Badges */}
+                    <div className="flex items-center gap-1 flex-wrap">
                       <button
                         type="button"
                         onClick={(e) => handleCopyOrderId(order.id, e)}
-                        className="text-xs font-mono font-black text-slate-800 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-xl border border-slate-200 flex items-center gap-1 cursor-pointer transition-colors"
-                        title="Click to copy Order ID"
+                        className="bg-white/90 hover:bg-white px-1.5 py-0.5 rounded-md text-[11px] font-mono font-black text-slate-800 border border-slate-200/90 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                        title="Click to copy Order #"
                       >
-                        <span>{order.id}</span>
-                        <Copy className="w-3 h-3 text-slate-400" />
+                        <span>#{order.id}</span>
+                        <Copy className="w-2.5 h-2.5 text-slate-400" />
                         {copiedOrderId === order.id && (
-                          <span className="text-[10px] text-emerald-700 font-bold ml-1">Copied!</span>
+                          <span className="text-[9px] text-emerald-700 font-bold ml-0.5">Copied!</span>
                         )}
                       </button>
 
-                      {renderStatusBadge(order)}
-
-                      {order.orderCategory && (
-                        <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">
-                          {order.orderCategory}
-                        </span>
-                      )}
+                      {/* Category Pill */}
+                      <span
+                        className={`px-1.5 py-0.2 rounded text-[9px] font-black border shadow-2xs ${
+                          order.orderCategory === 'Alteration' || order.orderCategory === 'Repair'
+                            ? 'bg-fuchsia-100 text-fuchsia-900 border-fuchsia-300'
+                            : 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                        }`}
+                      >
+                        {order.orderCategory || 'New Stitch'}
+                      </span>
 
                       {order.isRepeatCustomer && (
-                        <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 text-[10px] font-black border border-emerald-200 flex items-center gap-1">
-                          <UserCheck className="w-3 h-3" />
+                        <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-900 text-[9px] font-bold border border-blue-300 flex items-center gap-0.5 shadow-2xs">
+                          <UserCheck className="w-2.5 h-2.5" />
                           Repeat
                         </span>
                       )}
-                    </div>
 
-                    <div className="text-right">
-                      <div className="text-[11px] font-black text-slate-900">Total: ₹{order.totalAmount}</div>
-                      {order.balanceDue > 0 ? (
-                        <span className="px-2 py-0.5 rounded-md bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-black inline-block">
-                          Due: ₹{order.balanceDue}
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-black inline-block">
-                          ✓ Paid in Full
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Main Content Info Row */}
-                  <div className="flex items-center gap-3">
-                    <div
-                      onClick={() => onSelectOrder(order)}
-                      className="w-16 h-16 rounded-2xl bg-emerald-900/5 border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center cursor-pointer hover:opacity-90 transition-opacity relative"
-                    >
-                      {hasStitchedPhotos && order.stitchedPhotos ? (
-                        <img
-                          src={order.stitchedPhotos[0]}
-                          alt="Stitched dress"
-                          className="w-full h-full object-cover"
-                        />
-                      ) : order.fabricPhotos && order.fabricPhotos[0] ? (
-                        <img src={order.fabricPhotos[0]} alt="Fabric" className="w-full h-full object-cover" />
-                      ) : (
-                        <span className="text-2xl">🧵</span>
-                      )}
-
-                      {hasStitchedPhotos && (
-                        <span className="absolute bottom-0 right-0 bg-[#0B4636] text-amber-300 text-[9px] font-black px-1 rounded-tl-md">
-                          Stitched
+                      {order.isOverdue && (
+                        <span className="px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 text-[9px] font-black border border-rose-300 flex items-center gap-0.5 shadow-2xs animate-pulse">
+                          🔥 Overdue ({order.daysOverdue}d)
                         </span>
                       )}
                     </div>
 
-                    <div className="flex-1 min-w-0" onClick={() => onSelectOrder(order)}>
-                      <h3 className="text-sm font-extrabold text-slate-900 truncate hover:text-[#0B4636] cursor-pointer">
-                        {order.customerName}
-                      </h3>
-                      <p className="text-xs font-semibold text-slate-500 truncate">{order.customerPhone}</p>
-                      <p className="text-xs font-black text-[#0B4636] mt-0.5 truncate">
-                        {order.garmentType}{' '}
-                        {order.subTypeStyle && (
-                          <span className="font-normal text-slate-500">({order.subTypeStyle})</span>
+                    {/* Right Payment Status & 3-Dot Menu */}
+                    <div className="flex items-center gap-1.5">
+                      <div className="text-right flex items-center gap-1.5">
+                        <span className="text-xs font-black text-slate-900">Total: ₹{order.totalAmount}</span>
+                        {order.balanceDue > 0 ? (
+                          <span className="px-1.5 py-0.2 rounded bg-rose-100 border border-rose-300 text-rose-800 text-[9px] font-black inline-block shadow-2xs">
+                            Due: ₹{order.balanceDue}
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.2 rounded bg-emerald-100 border border-emerald-300 text-emerald-800 text-[9px] font-black inline-block shadow-2xs">
+                            ✓ Paid in Full
+                          </span>
                         )}
-                      </p>
-                    </div>
+                      </div>
 
-                    <div className="text-right shrink-0">
-                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Promised Delivery</div>
-                      <div className="text-xs font-black text-slate-900 mt-0.5">{order.dueDate}</div>
-                      <div className="text-[10px] text-slate-500">{order.dueTime || '18:00'}</div>
+                      {/* 3-Dot Options Dropdown */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setOpenCardMenuId(isCardMenuOpen ? null : order.id)}
+                          className="p-1 rounded bg-white/80 hover:bg-white text-slate-600 hover:text-slate-900 border border-slate-200/80 transition-colors cursor-pointer shadow-2xs"
+                        >
+                          <MoreVertical className="w-3 h-3" />
+                        </button>
+
+                        {isCardMenuOpen && (
+                          <div className="absolute right-0 mt-1 w-48 bg-white rounded-xl shadow-xl border border-slate-200 p-1 z-30 space-y-0.5 text-xs font-bold text-slate-700 animate-in fade-in zoom-in duration-150">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenCardMenuId(null);
+                                onSelectOrder(order);
+                              }}
+                              className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 cursor-pointer"
+                            >
+                              <FileText className="w-3.5 h-3.5 text-slate-500" />
+                              <span>View Full Details</span>
+                            </button>
+
+                            {onAssignTimelineClick && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenCardMenuId(null);
+                                  onAssignTimelineClick(order);
+                                }}
+                                className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 cursor-pointer"
+                              >
+                                <Scissors className="w-3.5 h-3.5 text-slate-500" />
+                                <span>Change Tailor / Due Date</span>
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOpenCardMenuId(null);
+                                setReceiptModalOrder(order);
+                              }}
+                              className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 cursor-pointer"
+                            >
+                              <Printer className="w-3.5 h-3.5 text-slate-500" />
+                              <span>Print / Share Bill</span>
+                            </button>
+
+                            {order.status !== 'Delivered' && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenCardMenuId(null);
+                                  handleStatusChangeRequest(order, 'Delivered');
+                                }}
+                                className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-emerald-50 text-emerald-800 font-black flex items-center gap-2 cursor-pointer"
+                              >
+                                <ShoppingBag className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>Mark Delivered</span>
+                              </button>
+                            )}
+
+                            {order.isArchived ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenCardMenuId(null);
+                                  if (onUnarchiveOrder) onUnarchiveOrder(order.id);
+                                }}
+                                className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 text-slate-700 flex items-center gap-2 cursor-pointer"
+                              >
+                                <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
+                                <span>Restore Order</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOpenCardMenuId(null);
+                                  onArchiveOrder(order.id);
+                                }}
+                                className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-rose-50 text-rose-700 flex items-center gap-2 cursor-pointer"
+                              >
+                                <Archive className="w-3.5 h-3.5 text-rose-500" />
+                                <span>Archive Order</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Stitched Photos Strip (if uploaded upon delivery/completion) */}
-                  {hasStitchedPhotos && order.stitchedPhotos && (
-                    <div className="p-2.5 rounded-2xl bg-emerald-50/60 border border-emerald-200/80 space-y-1.5">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-[10px] font-black text-emerald-900 flex items-center gap-1">
-                          <Camera className="w-3 h-3 text-emerald-700" />
-                          <span>Finished Stitched Garment Photos ({order.stitchedPhotos.length}):</span>
-                        </span>
-                        <span className="text-[10px] font-bold text-emerald-700">Click to zoom</span>
+                  {/* Middle Row (3 Horizontal Columns on Desktop) */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 items-center">
+                    
+                    {/* Column 1: Customer & Garment (4 cols) */}
+                    <div className="lg:col-span-4 flex flex-col justify-center space-y-1">
+                      <div className="flex items-center gap-2">
+                        {/* Photo Box */}
+                        <div
+                          onClick={() => {
+                            if (order.receiptImageUrl || (order.fabricPhotos && order.fabricPhotos[0])) {
+                              setSlipModalOrder(order);
+                            } else {
+                              onSelectOrder(order);
+                            }
+                          }}
+                          className="w-9 h-9 rounded-lg bg-white border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center cursor-pointer hover:opacity-90 relative group shadow-2xs"
+                          title="Click to view slip / fabric photo"
+                        >
+                          {hasStitchedPhotos && order.stitchedPhotos ? (
+                            <img src={order.stitchedPhotos[0]} alt="Stitched" className="w-full h-full object-cover" />
+                          ) : order.fabricPhotos && order.fabricPhotos[0] ? (
+                            <img src={order.fabricPhotos[0]} alt="Fabric" className="w-full h-full object-cover" />
+                          ) : order.receiptImageUrl ? (
+                            <img src={order.receiptImageUrl} alt="Slip" className="w-full h-full object-cover" />
+                          ) : (
+                            <span className="text-sm">🧵</span>
+                          )}
+                        </div>
+
+                        {/* Customer Info */}
+                        <div className="min-w-0 flex-1">
+                          <h4
+                            onClick={() => onSelectOrder(order)}
+                            className="text-xs font-black text-slate-900 truncate hover:text-[#0B4636] cursor-pointer leading-tight"
+                          >
+                            {order.customerName}
+                          </h4>
+                          <div className="text-[10px] text-slate-500 font-medium truncate">{order.customerPhone}</div>
+                          <div className="text-[11px] font-black text-[#0B4636] truncate">
+                            {order.garmentType} {order.subTypeStyle && <span className="font-semibold text-slate-500">({order.subTypeStyle})</span>}
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+
+                      {/* Special Notes banner if present */}
+                      {order.specialNotes && (
+                        <div className="bg-amber-50/90 border border-amber-200/90 rounded-md p-1 flex items-center gap-1 text-[9px] text-amber-950 shadow-2xs">
+                          <span className="font-black text-amber-800 shrink-0">📝</span>
+                          <span className="truncate font-semibold">{order.specialNotes}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Column 2: Worker & 5-Node Stepper (6 cols) */}
+                    <div className="lg:col-span-6 space-y-1 bg-white/90 backdrop-blur-xs p-1.5 sm:p-2 rounded-xl border border-slate-200/70 shadow-2xs">
+                      {/* Worker Header Info */}
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <div className="w-4 h-4 rounded bg-[#0B4636] text-amber-300 text-[9px] font-black flex items-center justify-center shrink-0">
+                            {isUnassigned ? '✂️' : (order.assignedTailor ? order.assignedTailor[0] : 'S')}
+                          </div>
+                          <span className="font-black text-slate-900 text-[11px] truncate">
+                            {isUnassigned ? 'Unassigned' : order.assignedTailor}
+                          </span>
+                          <span
+                            className={`text-[8px] font-bold px-1.5 py-0.2 rounded-full ${
+                              order.status === 'Stitching in Progress'
+                                ? 'bg-indigo-100 text-indigo-800'
+                                : order.status === 'Completed'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-slate-200 text-slate-700'
+                            }`}
+                          >
+                            {order.status}
+                          </span>
+                        </div>
+
+                        <div className="text-[9px] text-slate-400 font-medium">
+                          ⏱ ~{order.estimatedHours || 4}h
+                        </div>
+                      </div>
+
+                      {/* 5-Node Stepper */}
+                      <div className="relative flex items-center justify-between pt-0.5">
+                        {/* Connecting track line */}
+                        <div className="absolute top-[10px] left-3 right-3 h-0.5 bg-slate-200 -z-0" />
+                        <div
+                          className="absolute top-[10px] left-3 h-0.5 bg-emerald-500 -z-0 transition-all duration-300"
+                          style={{ width: `${Math.min(100, Math.max(0, (currentStageIdx / 4) * 100))}%` }}
+                        />
+
+                        {[
+                          { stage: 'Cutting', label: 'Cutting' },
+                          { stage: 'Assigned', label: 'Assigned' },
+                          { stage: 'Stitching', label: 'Stitching' },
+                          { stage: 'Ready', label: 'Ready' },
+                          { stage: 'Delivered', label: 'Delivered' },
+                        ].map((node, nIdx) => {
+                          const isDone = nIdx < currentStageIdx;
+                          const isCurrent = nIdx === currentStageIdx;
+
+                          return (
+                            <div
+                              key={node.stage}
+                              onClick={() => {
+                                if (node.stage === 'Cutting') handleStatusChangeRequest(order, 'New / Cutting');
+                                if (node.stage === 'Assigned') handleStatusChangeRequest(order, 'Assigned');
+                                if (node.stage === 'Stitching') handleStatusChangeRequest(order, 'Stitching in Progress');
+                                if (node.stage === 'Ready') handleStatusChangeRequest(order, 'Completed');
+                                if (node.stage === 'Delivered') handleStatusChangeRequest(order, 'Delivered');
+                              }}
+                              className="flex flex-col items-center cursor-pointer relative z-10 group"
+                              title={`Click to switch status to ${node.stage}`}
+                            >
+                              {/* Node Circle */}
+                              <div
+                                className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black transition-all ${
+                                  isDone
+                                    ? 'bg-emerald-500 text-white shadow-2xs'
+                                    : isCurrent
+                                    ? 'bg-indigo-600 text-white ring-2 ring-indigo-200 shadow-xs scale-105'
+                                    : 'bg-white border border-slate-300 text-slate-400 group-hover:border-slate-400'
+                                }`}
+                              >
+                                {isDone ? (
+                                  <Check className="w-2.5 h-2.5 stroke-[3]" />
+                                ) : isCurrent ? (
+                                  <Sparkles className="w-2.5 h-2.5 text-amber-300" />
+                                ) : (
+                                  <span>{nIdx + 1}</span>
+                                )}
+                              </div>
+
+                              {/* Label */}
+                              <span
+                                className={`text-[9px] mt-0.5 font-bold ${
+                                  isCurrent
+                                    ? 'text-indigo-950 font-black'
+                                    : isDone
+                                    ? 'text-slate-800'
+                                    : 'text-slate-400'
+                                }`}
+                              >
+                                {node.label}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Column 3: Delivery Info Box (2 cols) */}
+                    <div className="lg:col-span-2 bg-white/90 backdrop-blur-xs p-1.5 rounded-xl border border-slate-200/70 text-center sm:text-right flex lg:flex-col justify-between items-center lg:items-end shadow-2xs">
+                      <div className="flex items-center gap-1 text-[8px] font-bold text-slate-400 uppercase tracking-wider">
+                        <Calendar className="w-2 h-2" />
+                        <span>Delivery</span>
+                      </div>
+                      <div>
+                        <div className="text-xs font-black text-slate-900">{order.dueDate}</div>
+                        <div className="text-[9px] text-slate-500 font-medium">{order.dueTime || '18:00'}</div>
+                      </div>
+                      {order.isOverdue ? (
+                        <span className="text-[8px] font-black text-rose-600">🔴 Overdue</span>
+                      ) : (
+                        <span className="text-[8px] font-bold text-emerald-600">🟢 On Track</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Stitched Photos Strip (if finished dress photos attached) */}
+                  {hasStitchedPhotos && order.stitchedPhotos && (
+                    <div className="p-1.5 rounded-xl bg-emerald-50/60 border border-emerald-200/80 space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-[9px] font-black text-emerald-900 flex items-center gap-1">
+                          <Camera className="w-2.5 h-2.5 text-emerald-700" />
+                          <span>Finished Garment ({order.stitchedPhotos.length}):</span>
+                        </span>
+                        <span className="text-[8px] font-bold text-emerald-700">Click to zoom</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
                         {order.stitchedPhotos.map((photo, pIdx) => (
                           <div
                             key={pIdx}
                             onClick={() => setExpandedPhotoUrl(photo)}
-                            className="w-12 h-12 rounded-xl overflow-hidden border border-emerald-300 bg-white shrink-0 cursor-pointer hover:scale-105 transition-transform shadow-2xs"
+                            className="w-8 h-8 rounded-md overflow-hidden border border-emerald-300 bg-white shrink-0 cursor-pointer hover:scale-105 transition-transform shadow-2xs"
                           >
                             <img src={photo} alt={`Stitched ${pIdx + 1}`} className="w-full h-full object-cover" />
                           </div>
@@ -763,230 +1004,97 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
                     </div>
                   )}
 
-                  {/* Staff Tailor Assignment Strip */}
-                  {(() => {
-                    const isUnassigned =
-                      !order.assignedTailor ||
-                      order.assignedTailor === 'Unassigned' ||
-                      order.assignedTailor === 'Not Assigned';
-
-                    const isInProgress = order.status === 'Stitching in Progress' || order.status === 'Trial';
-                    const isCompleted = order.status === 'Completed';
-                    const isDelivered = order.status === 'Delivered';
-
-                    return (
-                      <div
-                        className={`rounded-2xl p-2.5 border flex items-center justify-between text-xs gap-2 transition-all ${
-                          isInProgress
-                            ? 'bg-indigo-50/80 border-indigo-200'
-                            : isCompleted
-                            ? 'bg-emerald-50/70 border-emerald-200'
-                            : isUnassigned
-                            ? 'bg-amber-50/80 border-amber-200'
-                            : 'bg-slate-50 border-slate-200/80'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div
-                            className={`w-7 h-7 rounded-full font-black text-xs flex items-center justify-center shrink-0 ${
-                              isCompleted
-                                ? 'bg-emerald-600 text-white'
-                                : isInProgress
-                                ? 'bg-indigo-600 text-white'
-                                : isUnassigned
-                                ? 'bg-amber-400 text-slate-950 font-extrabold'
-                                : 'bg-[#0B4636] text-amber-300'
-                            }`}
-                          >
-                            {isCompleted ? '✓' : isInProgress ? '🧵' : isUnassigned ? '✂️' : order.assignedTailor[0]}
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span
-                                className={`font-black ${
-                                  isInProgress
-                                    ? 'text-indigo-950'
-                                    : isCompleted
-                                    ? 'text-emerald-950'
-                                    : isUnassigned
-                                    ? 'text-amber-900'
-                                    : 'text-slate-800'
-                                }`}
-                              >
-                                {isInProgress && isUnassigned
-                                  ? 'In-Shop Stitching (Master Workshop)'
-                                  : isUnassigned
-                                  ? 'Karigar Not Assigned Yet'
-                                  : `${order.assignedTailor}`}
-                              </span>
-                              
-                              <span className="text-[10px] px-1.5 py-0.5 rounded-md font-bold bg-white/80 border border-slate-200 text-slate-600">
-                                {isInProgress
-                                  ? 'In Progress'
-                                  : isCompleted
-                                  ? 'Stitching Done'
-                                  : isDelivered
-                                  ? 'Delivered'
-                                  : isUnassigned
-                                  ? 'Cutting Stage'
-                                  : 'Assigned'}
-                              </span>
-                            </div>
-                            {order.estimatedHours ? (
-                              <span className="text-[10px] text-slate-500">• ~{order.estimatedHours}h stitching</span>
-                            ) : null}
-                          </div>
-                        </div>
-
-                        {onAssignTimelineClick && !isDelivered && (
-                          <button
-                            type="button"
-                            onClick={() => onAssignTimelineClick(order)}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-black shadow-2xs cursor-pointer flex items-center gap-1 transition-all active:scale-95 shrink-0 ${
-                              isUnassigned
-                                ? 'bg-amber-500 hover:bg-amber-600 text-slate-950'
-                                : 'bg-white border border-slate-300 text-slate-800 hover:bg-slate-100'
-                            }`}
-                          >
-                            <Scissors className="w-3.5 h-3.5" />
-                            <span>{isUnassigned ? 'Assign Tailor' : 'Change'}</span>
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })()}
-
-                  {/* 5-Stage Interactive Status Pipeline Tracker with Voice Note, Measurements & Receipt Quick Actions */}
-                  <OrderStatusTracker
-                    order={order}
-                    onStatusChangeRequest={handleStatusChangeRequest}
-                    shopProfile={shopProfile}
-                  />
-
-                  {/* Extended Due Date Modal Inline Accordion */}
-                  {isExtending && (
-                    <div className="bg-amber-50 rounded-2xl p-3 border border-amber-300 space-y-2 animate-fade-in">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-amber-950">Extend Promised Due Date</span>
-                        <button
-                          onClick={() => setExtendingOrderId(null)}
-                          className="text-[11px] font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="date"
-                          value={newDueDate}
-                          onChange={(e) => setNewDueDate(e.target.value)}
-                          className="flex-1 bg-white border border-amber-300 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-900"
-                        />
-                        <button
-                          onClick={() => {
-                            onExtendDueDate(order.id, newDueDate);
-                            setExtendingOrderId(null);
-                          }}
-                          className="px-3.5 py-1.5 rounded-xl bg-[#0B4636] text-amber-300 font-black text-xs cursor-pointer shadow-sm"
-                        >
-                          Save Date
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Quick Action Footer Buttons - Google-Grade Streamlined for 30-50+ Non-Tech Users */}
-                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2 text-xs flex-wrap">
-                    {/* Direct Contact Buttons (Instant Call & WhatsApp) */}
-                    <div className="flex items-center gap-1.5">
+                  {/* Bottom Action Buttons Row */}
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-200/50 gap-1 flex-wrap">
+                    {/* Left Actions: Slip Photo, Receipt, & Single Voice Note button */}
+                    <div className="flex items-center gap-1 flex-wrap">
                       <button
-                        onClick={() => handleSendReminder(order)}
-                        className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center gap-1.5 shadow-sm cursor-pointer transition-all active:scale-95"
-                        title="Send WhatsApp Update"
+                        type="button"
+                        onClick={() => setSlipModalOrder(order)}
+                        className="px-2 py-0.5 rounded-md bg-white/90 hover:bg-white text-amber-900 border border-amber-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
                       >
-                        <Send className="w-3.5 h-3.5" />
-                        <span>WhatsApp</span>
+                        <Camera className="w-3 h-3 text-amber-800" />
+                        <span>Slip</span>
                       </button>
 
-                      <a
-                        href={`tel:${clean10DigitPhone(order.customerPhone)}`}
-                        className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 flex items-center justify-center cursor-pointer border border-slate-200"
-                        title="Call Customer Directly"
-                      >
-                        <Phone className="w-4 h-4 text-slate-700" />
-                      </a>
-
                       <button
-                        onClick={() => {
-                          setExtendingOrderId(order.id);
-                          setNewDueDate(order.dueDate);
-                        }}
-                        className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1 transition-all cursor-pointer border border-slate-200/60"
-                        title="Extend Due Date"
+                        type="button"
+                        onClick={() => setReceiptModalOrder(order)}
+                        className="px-2 py-0.5 rounded-md bg-white/90 hover:bg-white text-teal-900 border border-teal-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
                       >
-                        <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                        <span className="hidden sm:inline">Date</span>
+                        <FileText className="w-3 h-3 text-teal-800" />
+                        <span>Receipt</span>
                       </button>
-                    </div>
 
-                    {/* Prominent Contextual Stage Action Button */}
-                    <div className="flex items-center gap-1.5 ml-auto">
-                      {(order.status === 'Assigned' || order.status === 'Stitching in Progress' || order.status === 'Trial') && (
+                      {/* Single Voice Note Play Button */}
+                      {order.voiceNoteUrl && (
                         <button
                           type="button"
-                          onClick={() => handleStatusChangeRequest(order, 'Completed')}
-                          className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center gap-1.5 shadow-sm cursor-pointer active:scale-95 transition-all"
+                          onClick={(e) => handleToggleVoicePlay(order, e)}
+                          className={`px-2 py-0.5 rounded-md border text-[11px] font-black flex items-center gap-1 cursor-pointer transition-all shadow-2xs ${
+                            isVoicePlaying
+                              ? 'bg-purple-600 text-white border-purple-500 shadow-md ring-2 ring-purple-300 animate-pulse'
+                              : 'bg-purple-100 hover:bg-purple-200 text-purple-900 border-purple-300'
+                          }`}
+                          title={isVoicePlaying ? 'Pause Voice Instruction' : 'Play Voice Instruction'}
                         >
-                          <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />
-                          <span>Ready for Pickup</span>
+                          <Mic className={`w-3 h-3 ${isVoicePlaying ? 'text-white' : 'text-purple-800'}`} />
+                          <span>{isVoicePlaying ? 'Playing...' : `Voice (${order.voiceNoteDurationSec || 12}s)`}</span>
+                          {isVoicePlaying ? (
+                            <Pause className="w-3 h-3 fill-current" />
+                          ) : (
+                            <Play className="w-3 h-3 fill-current ml-0.5" />
+                          )}
                         </button>
                       )}
+                    </div>
 
+                    {/* Right Actions: WhatsApp & Phone Call */}
+                    <div className="flex items-center gap-1">
                       {order.status === 'Completed' && (
                         <button
                           type="button"
                           onClick={() => handleStatusChangeRequest(order, 'Delivered')}
-                          className="px-3 py-2 rounded-xl bg-[#0B4636] hover:bg-[#073024] text-amber-300 font-black text-xs flex items-center gap-1.5 shadow-sm cursor-pointer active:scale-95 transition-all"
+                          className="px-2 py-0.5 rounded-md bg-[#0B4636] hover:bg-[#073024] text-amber-300 font-black text-[11px] flex items-center gap-1 shadow-2xs cursor-pointer active:scale-95 transition-all"
                         >
-                          <ShoppingBag className="w-4 h-4 stroke-[2.5]" />
-                          <span>Deliver & Collect ₹{order.balanceDue}</span>
-                        </button>
-                      )}
-
-                      {order.status === 'Delivered' && (
-                        <span className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 font-black text-xs border border-emerald-200 flex items-center gap-1">
-                          <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[3]" />
-                          <span>Delivered</span>
-                        </span>
-                      )}
-
-                      {order.isArchived ? (
-                        <button
-                          onClick={() => onUnarchiveOrder && onUnarchiveOrder(order.id)}
-                          className="px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1 cursor-pointer"
-                          title="Restore Order"
-                        >
-                          <RefreshCw className="w-3.5 h-3.5" />
-                          <span>Restore</span>
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => onArchiveOrder(order.id)}
-                          className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer border border-slate-200"
-                          title="Archive Order"
-                        >
-                          <Archive className="w-4 h-4" />
+                          <ShoppingBag className="w-3 h-3 stroke-[2.5]" />
+                          <span>Deliver (₹{order.balanceDue})</span>
                         </button>
                       )}
 
                       <button
-                        onClick={() => onSelectOrder(order)}
-                        className="px-3 py-2 rounded-xl bg-[#0B4636] hover:bg-[#073024] text-amber-300 font-black text-xs flex items-center gap-1 shadow-sm cursor-pointer"
+                        type="button"
+                        onClick={() => {
+                          setExtendingOrderId(order.id);
+                          setNewDueDate(order.dueDate);
+                          setNewDueTime(order.dueTime || '18:00');
+                        }}
+                        className="p-1 rounded bg-white/90 hover:bg-white text-slate-700 border border-slate-200 cursor-pointer shadow-2xs"
+                        title="Reschedule Promised Date"
                       >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>Details</span>
-                        <ChevronRight className="w-3.5 h-3.5" />
+                        <Calendar className="w-3 h-3" />
                       </button>
+
+                      <a
+                        href={getWhatsAppUrl(
+                          order.customerPhone,
+                          `Hello ${order.customerName}, update from ${shopProfile?.shopName || 'ShopScopers Tailor'} regarding your ${order.garmentType} (Order #${order.id}): Current status is "${order.status}". Balance due at pickup: ₹${order.balanceDue}.`
+                        )}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-2.5 py-0.5 rounded-md bg-[#25D366] hover:bg-[#20bd5a] text-white font-black text-[11px] flex items-center gap-1 shadow-2xs cursor-pointer transition-all active:scale-95"
+                      >
+                        <Send className="w-3 h-3" />
+                        <span>WhatsApp</span>
+                      </a>
+
+                      <a
+                        href={`tel:${clean10DigitPhone(order.customerPhone)}`}
+                        className="p-1 rounded bg-white/90 hover:bg-white text-slate-700 border border-slate-200 cursor-pointer shadow-2xs"
+                        title="Call Customer Directly"
+                      >
+                        <Phone className="w-3 h-3" />
+                      </a>
                     </div>
                   </div>
                 </div>
@@ -996,14 +1104,13 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
         </div>
       </div>
 
-      {/* ================= RESCHEDULE PROMISED DATE & TIME MODAL ================= */}
+      {/* ================= MODAL 1: RESCHEDULE PROMISED DATE & TIME MODAL ================= */}
       {extendingOrderId && (() => {
         const targetOrder = orders.find((o) => o.id === extendingOrderId);
         if (!targetOrder) return null;
 
         const handleSaveReschedule = () => {
           onExtendDueDate(extendingOrderId, newDueDate);
-          // Also update dueTime if changed
           roomDb.updateOrderDueDate(extendingOrderId, newDueDate, newDueTime);
           setExtendingOrderId(null);
         };
@@ -1062,7 +1169,151 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
         );
       })()}
 
-      {/* ================= ORDER COMPLETED MODAL (WHATSAPP NOTIFICATION) ================= */}
+      {/* ================= MODAL 2: RECEIPT / BILL MODAL ================= */}
+      {receiptModalOrder && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-black">
+                  <FileText className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900">Order Invoice / Receipt</h3>
+                  <p className="text-[10px] text-slate-500 font-mono">#{receiptModalOrder.id}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReceiptModalOrder(null)}
+                className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Receipt Body */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 font-mono text-xs space-y-3 text-slate-800">
+              <div className="text-center border-b border-slate-200 pb-2">
+                <div className="font-black text-sm text-slate-900">{shopProfile?.shopName || 'ShopScopers Tailor'}</div>
+                <div className="text-[10px] text-slate-500">{shopProfile?.address || 'Master Boutique & Tailors'}</div>
+                <div className="text-[10px] text-slate-500">Phone: {shopProfile?.phone || '+91 7608807790'}</div>
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Customer:</span>
+                  <span className="font-bold">{receiptModalOrder.customerName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Mobile:</span>
+                  <span>{receiptModalOrder.customerPhone}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Garment:</span>
+                  <span className="font-bold">{receiptModalOrder.garmentType}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Promised Date:</span>
+                  <span className="font-bold text-[#0B4636]">{receiptModalOrder.dueDate}</span>
+                </div>
+              </div>
+
+              <div className="border-t border-b border-slate-200 py-2 space-y-1">
+                <div className="flex justify-between">
+                  <span>Stitching Charges:</span>
+                  <span className="font-bold">₹{receiptModalOrder.totalAmount}</span>
+                </div>
+                <div className="flex justify-between text-emerald-700">
+                  <span>Advance Received:</span>
+                  <span>- ₹{receiptModalOrder.advancePaid}</span>
+                </div>
+                <div className="flex justify-between font-black text-sm text-slate-900 pt-1 border-t border-slate-200">
+                  <span>Balance Due on Delivery:</span>
+                  <span className={receiptModalOrder.balanceDue > 0 ? 'text-rose-600' : 'text-emerald-600'}>
+                    ₹{receiptModalOrder.balanceDue}
+                  </span>
+                </div>
+              </div>
+
+              <div className="text-center text-[10px] text-slate-400">
+                Thank you for choosing {shopProfile?.shopName || 'ShopScopers'}!
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-2 pt-2">
+              <a
+                href={getWhatsAppUrl(
+                  receiptModalOrder.customerPhone,
+                  `🧾 *Receipt from ${shopProfile?.shopName || 'ShopScopers'}*\nOrder #${receiptModalOrder.id}\nGarment: ${receiptModalOrder.garmentType}\nTotal: ₹${receiptModalOrder.totalAmount}\nAdvance: ₹${receiptModalOrder.advancePaid}\nBalance Due: ₹${receiptModalOrder.balanceDue}\nPromised Date: ${receiptModalOrder.dueDate}`
+                )}
+                target="_blank"
+                rel="noreferrer"
+                className="flex-1 py-2.5 bg-[#25D366] hover:bg-[#20bd5a] text-white font-black text-xs rounded-xl flex items-center justify-center gap-1.5 shadow cursor-pointer"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>Send WhatsApp Receipt</span>
+              </a>
+
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="py-2.5 px-4 rounded-xl border border-slate-200 font-bold text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Print</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL 3: SLIP PHOTO MODAL ================= */}
+      {slipModalOrder && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl p-5 max-w-md w-full shadow-2xl border border-slate-200 space-y-3 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <div>
+                <h3 className="text-sm font-black text-slate-900">Order Slip / Fabric Photo</h3>
+                <p className="text-[11px] text-slate-500 font-mono">#{slipModalOrder.id} • {slipModalOrder.customerName}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSlipModalOrder(null)}
+                className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="rounded-2xl overflow-hidden bg-slate-100 border border-slate-200 max-h-[60vh] flex items-center justify-center">
+              {slipModalOrder.receiptImageUrl || (slipModalOrder.fabricPhotos && slipModalOrder.fabricPhotos[0]) ? (
+                <img
+                  src={slipModalOrder.receiptImageUrl || slipModalOrder.fabricPhotos[0]}
+                  alt="Order Slip"
+                  className="w-full h-auto object-contain"
+                />
+              ) : (
+                <div className="p-8 text-center text-slate-400 space-y-2">
+                  <Camera className="w-8 h-8 mx-auto" />
+                  <p className="text-xs">No physical slip photo was captured for this order.</p>
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setSlipModalOrder(null)}
+              className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL 4: ORDER COMPLETED MODAL ================= */}
       {completedModalOrder && (
         <OrderCompletedModal
           order={completedModalOrder}
@@ -1072,7 +1323,7 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
         />
       )}
 
-      {/* ================= ORDER DELIVERY MODAL (SETTLEMENT & PHOTOS) ================= */}
+      {/* ================= MODAL 5: ORDER DELIVERY MODAL ================= */}
       {deliveryModalOrder && (
         <OrderDeliveryModal
           order={deliveryModalOrder}
@@ -1082,7 +1333,7 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
         />
       )}
 
-      {/* ================= FULL SCREEN PHOTO ZOOM MODAL ================= */}
+      {/* ================= MODAL 6: FULL SCREEN PHOTO ZOOM MODAL ================= */}
       {expandedPhotoUrl && (
         <div
           onClick={() => setExpandedPhotoUrl(null)}

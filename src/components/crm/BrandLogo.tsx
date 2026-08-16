@@ -120,7 +120,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
       {showText && (
         <div className="flex flex-col">
           <span className={`font-black tracking-tight leading-none ${textSizeMap[size]} ${textClassName}`}>
-            Silai<span className="text-amber-500">Hub</span>
+            Shop<span className="text-amber-500">Scopers</span>
           </span>
           <span className={`text-[10px] font-bold tracking-wider uppercase mt-0.5 leading-none ${subtitleClassName}`}>
             Tailor Master CRM

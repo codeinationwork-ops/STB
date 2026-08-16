@@ -69,7 +69,7 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({
             <BrandLogo size="md" variant="glass" />
             <div>
               <h1 className="text-base sm:text-lg font-black tracking-tight text-white flex items-center gap-2">
-                <span>SilaiHub</span>
+                <span>ShopScopers</span>
                 <span className="bg-amber-400 text-slate-950 text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
                   CRM
                 </span>
@@ -593,7 +593,7 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({
           <div className="flex items-center gap-3">
             <BrandLogo size="sm" variant="glass" />
             <div>
-              <span className="font-bold text-white block">SilaiHub Tailor CRM & Ledger</span>
+              <span className="font-bold text-white block">ShopScopers Tailor CRM & Ledger</span>
               <span className="text-[11px] text-slate-500">Android Room SQLite & Firebase Cloud Synchronized</span>
             </div>
           </div>

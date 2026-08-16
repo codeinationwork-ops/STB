@@ -6,6 +6,7 @@ import {
   RevenueAnalytics,
   PaymentMode,
   PaymentRecord,
+  AuthSessionState,
 } from '../types';
 import {
   INITIAL_ORDERS,
@@ -19,6 +20,7 @@ const ORDERS_KEY = 'shopscoper_room_orders_v3';
 const CUSTOMERS_KEY = 'shopscoper_room_customers_v3';
 const TAILORS_KEY = 'shopscoper_room_tailors_v3';
 const SHOP_PROFILE_KEY = 'shopscoper_room_profile_v3';
+const AUTH_SESSION_KEY = 'shopscoper_room_auth_session_v3';
 const SYNC_STATE_KEY = 'shopscoper_room_sync_v3';
 
 export class LocalRoomDatabase {
@@ -406,6 +408,35 @@ export class LocalRoomDatabase {
     const updated = { ...current, ...profile };
     this.inMemoryShopProfile = updated;
     this.persistShopProfile(updated);
+    this.notify();
+  }
+
+  // --- Auth Session Persistence (Keep logged in across refreshes & sessions) ---
+  public getAuthSession(): AuthSessionState | null {
+    try {
+      const data = localStorage.getItem(AUTH_SESSION_KEY);
+      if (!data) return null;
+      const parsed = JSON.parse(data);
+      if (parsed && parsed.isAuthenticated && parsed.phoneNumber) {
+        return parsed as AuthSessionState;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  public saveAuthSession(session: AuthSessionState): void {
+    this.safeSetItem(AUTH_SESSION_KEY, JSON.stringify(session));
+    this.notify();
+  }
+
+  public clearAuthSession(): void {
+    try {
+      localStorage.removeItem(AUTH_SESSION_KEY);
+    } catch (e) {
+      console.warn('Clear auth session notice:', e);
+    }
     this.notify();
   }
 

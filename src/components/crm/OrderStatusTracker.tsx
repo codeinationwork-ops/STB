@@ -33,7 +33,7 @@ export const ORDER_STAGES: {
   status: OrderStatus;
   label: string;
   shortLabel: string;
-  subLabel: string;
+  stepNumber: number;
   icon: any;
   color: string;
   bgColor: string;
@@ -42,8 +42,8 @@ export const ORDER_STAGES: {
   {
     status: 'New / Cutting',
     label: '1. Received & Cutting',
-    shortLabel: '1. Received',
-    subLabel: 'Cutting',
+    shortLabel: 'Cutting',
+    stepNumber: 1,
     icon: Scissors,
     color: 'text-amber-700',
     bgColor: 'bg-amber-500',
@@ -52,8 +52,8 @@ export const ORDER_STAGES: {
   {
     status: 'Assigned',
     label: '2. Assigned to Karigar',
-    shortLabel: '2. Assigned',
-    subLabel: 'Assigned',
+    shortLabel: 'Assigned',
+    stepNumber: 2,
     icon: Clock,
     color: 'text-blue-700',
     bgColor: 'bg-blue-600',
@@ -62,8 +62,8 @@ export const ORDER_STAGES: {
   {
     status: 'Stitching in Progress',
     label: '3. Stitching in Progress',
-    shortLabel: '3. Stitching',
-    subLabel: 'In Progress',
+    shortLabel: 'Stitching',
+    stepNumber: 3,
     icon: Sparkles,
     color: 'text-indigo-700',
     bgColor: 'bg-indigo-600',
@@ -72,8 +72,8 @@ export const ORDER_STAGES: {
   {
     status: 'Completed',
     label: '4. Ready for Pickup',
-    shortLabel: '4. Ready',
-    subLabel: 'Pickup Ready',
+    shortLabel: 'Ready',
+    stepNumber: 4,
     icon: CheckCircle2,
     color: 'text-emerald-700',
     bgColor: 'bg-emerald-600',
@@ -82,8 +82,8 @@ export const ORDER_STAGES: {
   {
     status: 'Delivered',
     label: '5. Delivered & Settled',
-    shortLabel: '5. Delivered',
-    subLabel: 'Completed',
+    shortLabel: 'Delivered',
+    stepNumber: 5,
     icon: ShoppingBag,
     color: 'text-[#0B4636]',
     bgColor: 'bg-[#0B4636]',
@@ -327,7 +327,7 @@ export const OrderStatusTracker: React.FC<OrderStatusTrackerProps> = ({
       </div>
 
       {/* 5-Step Segmented Bar with Big Touch Targets */}
-      <div className="grid grid-cols-5 gap-1.5 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200">
+      <div className="grid grid-cols-5 gap-1 sm:gap-1.5 p-1 sm:p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200">
         {ORDER_STAGES.map((stage, idx) => {
           const isPassed = idx < currentIdx;
           const isCurrent = idx === currentIdx;
@@ -342,7 +342,7 @@ export const OrderStatusTracker: React.FC<OrderStatusTrackerProps> = ({
                 onStatusChangeRequest(order, stage.status);
               }}
               title={`Change status to ${stage.label}`}
-              className={`py-2 px-1 rounded-xl text-center transition-all cursor-pointer flex flex-col items-center justify-center relative overflow-hidden group min-h-[46px] ${
+              className={`py-1.5 sm:py-2 px-0.5 sm:px-1 rounded-xl text-center transition-all cursor-pointer flex flex-col items-center justify-center relative overflow-hidden group min-h-[44px] ${
                 isCurrent
                   ? `${stage.bgColor} text-white font-black shadow-md ring-2 ring-amber-300 scale-[1.02]`
                   : isPassed
@@ -350,18 +350,15 @@ export const OrderStatusTracker: React.FC<OrderStatusTrackerProps> = ({
                   : 'bg-white hover:bg-slate-50 text-slate-600 font-bold hover:text-slate-900 border border-slate-200/60'
               }`}
             >
-              <div className="flex items-center gap-1">
+              <div className="flex items-center justify-center">
                 {isPassed ? (
                   <Check className="w-3.5 h-3.5 text-emerald-700 stroke-[3]" />
                 ) : (
                   <Icon className={`w-3.5 h-3.5 ${isCurrent ? 'text-amber-300' : 'text-slate-500'}`} />
                 )}
               </div>
-              <span className="text-[10px] sm:text-[11px] truncate max-w-full font-black leading-tight mt-0.5">
+              <span className={`text-[10px] sm:text-[11px] font-black leading-tight mt-0.5 tracking-tight ${isCurrent ? 'text-white' : ''}`}>
                 {stage.shortLabel}
-              </span>
-              <span className={`text-[9px] font-bold leading-none ${isCurrent ? 'text-amber-200' : 'text-slate-400'}`}>
-                {stage.subLabel}
               </span>
             </button>
           );

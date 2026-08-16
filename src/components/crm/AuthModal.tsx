@@ -46,7 +46,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <div className="flex items-center gap-2.5">
             <BrandLogo size="xs" variant="glass" />
             <div>
-              <h3 className="text-xs font-black text-white tracking-tight uppercase">SilaiHub Secure Auth</h3>
+              <h3 className="text-xs font-black text-white tracking-tight uppercase">ShopScopers Secure Auth</h3>
               <p className="text-[10px] text-amber-300 font-medium">OTP Mobile Authentication</p>
             </div>
           </div>

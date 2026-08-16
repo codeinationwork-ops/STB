@@ -52,9 +52,12 @@ type AppViewScreen =
   | 'refund';
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false); // Start on Auth (Login / Sign Up)
-  const [userPhone, setUserPhone] = useState<string>('');
-  const [currentScreen, setCurrentScreen] = useState<AppViewScreen>('auth');
+  const initialSession = roomDb.getAuthSession();
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => !!initialSession?.isAuthenticated);
+  const [userPhone, setUserPhone] = useState<string>(() => initialSession?.phoneNumber || '');
+  const [currentScreen, setCurrentScreen] = useState<AppViewScreen>(() =>
+    initialSession?.isAuthenticated ? 'dashboard' : 'auth'
+  );
   const [ordersInitialTab, setOrdersInitialTab] = useState<'all' | 'cutting' | 'stitching' | 'overdue' | 'completed' | 'archived'>('all');
 
   const [orders, setOrders] = useState<TailorOrder[]>([]);
@@ -74,6 +77,15 @@ export default function App() {
       setTailors(roomDb.getTailors());
       setShopProfile(roomDb.getShopProfile());
       setAnalytics(roomDb.getRevenueAnalytics());
+
+      // Sync active session if available
+      const activeSession = roomDb.getAuthSession();
+      if (activeSession?.isAuthenticated) {
+        setIsAuthenticated(true);
+        if (activeSession.phoneNumber) {
+          setUserPhone(activeSession.phoneNumber);
+        }
+      }
     };
 
     load();
@@ -95,12 +107,25 @@ export default function App() {
         phoneNumber: phone,
       });
     }
+
+    // Persist login session on this device indefinitely until explicit logout
+    roomDb.saveAuthSession({
+      isAuthenticated: true,
+      phoneNumber: phone,
+      loginTimestamp: new Date().toISOString(),
+      shopName: shopDetails?.shopName,
+      ownerName: shopDetails?.ownerName,
+    });
+
     setIsAuthenticated(true);
     setCurrentScreen('dashboard');
   };
 
   const handleLogout = () => {
+    // Clear persisted session on this device
+    roomDb.clearAuthSession();
     setIsAuthenticated(false);
+    setUserPhone('');
     setCurrentScreen('auth');
   };
 
