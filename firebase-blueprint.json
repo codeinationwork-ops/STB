@@ -1,190 +1,117 @@
 {
   "entities": {
-    "products": {
-      "title": "Products",
-      "description": "Direct D2C Brand Catalog",
+    "tailor_orders": {
+      "title": "Tailor Orders",
+      "description": "Tailoring orders with customer, measurements, assigned tailor, stage tracking and payment settlement",
       "type": "object",
       "properties": {
-        "name": { "type": "string" },
-        "brand": { "type": "string" },
-        "directPrice": { "type": "number" },
-        "marketplacePrice": { "type": "number" },
-        "category": { "type": "string" },
-        "rating": { "type": "number" },
-        "reviewsCount": { "type": "number" },
-        "inStock": { "type": "boolean" },
-        "images": { "type": "array", "items": { "type": "string" } },
-        "description": { "type": "string" },
-        "specs": { "type": "array" }
+        "id": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "isRepeatCustomer": { "type": "boolean" },
+        "garmentType": { "type": "string" },
+        "orderCategory": { "type": "string" },
+        "subTypeStyle": { "type": "string" },
+        "genderCategory": { "type": "string" },
+        "measurementMode": { "type": "string" },
+        "measurements": { "type": "object" },
+        "receiptImageUrl": { "type": "string" },
+        "referenceGarmentUrl": { "type": "string" },
+        "specialNotes": { "type": "string" },
+        "voiceNoteUrl": { "type": "string" },
+        "voiceNoteDurationSec": { "type": "number" },
+        "fabricPhotos": { "type": "array" },
+        "stitchedPhotos": { "type": "array" },
+        "deliveredDate": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "advancePaid": { "type": "number" },
+        "balanceDue": { "type": "number" },
+        "paymentMode": { "type": "string" },
+        "paymentHistory": { "type": "array" },
+        "status": { "type": "string" },
+        "createdDate": { "type": "string" },
+        "createdTime": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "dueTime": { "type": "string" },
+        "assignedTailor": { "type": "string" },
+        "estimatedHours": { "type": "number" },
+        "offerMessage": { "type": "string" },
+        "isOverdue": { "type": "boolean" },
+        "daysOverdue": { "type": "number" },
+        "isArchived": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
       },
-      "required": ["name", "brand", "directPrice", "marketplacePrice", "category"]
+      "required": ["id", "customerName", "customerPhone", "garmentType", "totalAmount", "status", "dueDate"]
     },
-    "users": {
-      "title": "User Profile",
-      "description": "Authenticated user profiles stored from Google Auth",
+    "tailor_customers": {
+      "title": "Tailor Customers",
+      "description": "Customer directory with saved measurements and order history",
       "type": "object",
       "properties": {
-        "uid": { "type": "string" },
-        "email": { "type": "string" },
+        "id": { "type": "string" },
         "name": { "type": "string" },
-        "avatar": { "type": "string" },
+        "phone": { "type": "string" },
+        "isRepeat": { "type": "boolean" },
+        "ordersCount": { "type": "number" },
+        "lastOrderDate": { "type": "string" },
+        "totalSpent": { "type": "number" },
+        "gender": { "type": "string" },
+        "measurements": { "type": "object" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "phone"]
+    },
+    "tailor_staff": {
+      "title": "Staff Tailors",
+      "description": "Tailor workshop staff roster for order assignment",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
         "role": { "type": "string" },
-        "updatedAt": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "initials": { "type": "string" },
+        "activeOrdersCount": { "type": "number" }
       },
-      "required": ["uid", "email", "name"]
+      "required": ["id", "name", "role"]
     },
-    "wishlists": {
-      "title": "Wishlist",
-      "description": "User Wishlist items",
+    "shop_profiles": {
+      "title": "Shop Profile",
+      "description": "Boutique tailoring shop branding, address, and UPI payment settings",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
-        "productId": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "shopName": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "address": { "type": "string" },
+        "googleMapUrl": { "type": "string" },
+        "upiId": { "type": "string" },
+        "upiQrCodeUrl": { "type": "string" },
+        "gpayPhonePeNumber": { "type": "string" },
+        "lastSyncedTimestamp": { "type": "string" }
       },
-      "required": ["userId", "productId"]
-    },
-    "searches": {
-      "title": "Search History",
-      "description": "Logged AI search queries",
-      "type": "object",
-      "properties": {
-        "query": { "type": "string" },
-        "createdAt": { "type": "string" }
-      }
-    },
-    "brand_removal_requests": {
-      "title": "Brand Removal Requests",
-      "description": "Requests from brand owners to remove their brand listing",
-      "type": "object",
-      "properties": {
-        "brandName": { "type": "string" },
-        "websiteUrl": { "type": "string" },
-        "contactName": { "type": "string" },
-        "contactEmail": { "type": "string" },
-        "contactPhone": { "type": "string" },
-        "reason": { "type": "string" },
-        "createdAt": { "type": "string" }
-      },
-      "required": ["brandName", "contactEmail", "contactName"]
-    },
-    "brand_addition_requests": {
-      "title": "Brand Addition Requests",
-      "description": "Requests from brand owners to add/list their brand",
-      "type": "object",
-      "properties": {
-        "brandName": { "type": "string" },
-        "websiteUrl": { "type": "string" },
-        "contactName": { "type": "string" },
-        "contactEmail": { "type": "string" },
-        "contactPhone": { "type": "string" },
-        "category": { "type": "string" },
-        "details": { "type": "string" },
-        "createdAt": { "type": "string" }
-      },
-      "required": ["brandName", "websiteUrl", "contactEmail", "contactName"]
-    },
-    "shopify_stores": {
-      "title": "Shopify Stores",
-      "description": "Registered Shopify stores connected for product scraping and API integration",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "store_domain": { "type": "string" },
-        "store_name": { "type": "string" },
-        "api_key": { "type": "string" },
-        "access_token": { "type": "string" },
-        "status": { "type": "string" },
-        "total_products": { "type": "number" },
-        "last_scraped_at": { "type": "string" },
-        "created_at": { "type": "string" }
-      },
-      "required": ["store_domain", "store_name"]
-    },
-    "shopify_products": {
-      "title": "Shopify Products",
-      "description": "Scraped product items from Shopify .json endpoints with variant IDs and discount calculation",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "variant_id": { "type": "string" },
-        "title": { "type": "string" },
-        "description": { "type": "string" },
-        "category": { "type": "string" },
-        "images": { "type": "array" },
-        "price": { "type": "number" },
-        "compare_at_price": { "type": "number" },
-        "discount_percentage": { "type": "number" },
-        "store_domain": { "type": "string" },
-        "cart_permalink": { "type": "string" },
-        "vendor": { "type": "string" },
-        "created_at": { "type": "string" }
-      },
-      "required": ["title", "price", "store_domain", "variant_id"]
-    },
-    "auto_products": {
-      "title": "Auto Products",
-      "description": "Products harvested automatically by AI Product Reader pipeline",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "source": { "type": "object" },
-        "product": { "type": "object" },
-        "pricing": { "type": "object" },
-        "fashion": { "type": "object" },
-        "collections": { "type": "array" },
-        "images": { "type": "object" },
-        "ai": { "type": "object" },
-        "crawler": { "type": "object" },
-        "createdAt": { "type": "string" }
-      },
-      "required": ["source", "product", "pricing", "images"]
-    },
-    "crawl_jobs": {
-      "title": "Crawl Jobs",
-      "description": "Job tracker for multi-URL auto product crawler queue",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string" },
-        "status": { "type": "string" },
-        "websitesCount": { "type": "number" },
-        "productsFound": { "type": "number" },
-        "productsProcessed": { "type": "number" },
-        "createdAt": { "type": "string" }
-      },
-      "required": ["id", "status"]
+      "required": ["shopName", "ownerName"]
     }
   },
   "firestore": {
-    "products": {
-      "schema": "products",
-      "description": "Master products collection"
+    "tailor_orders": {
+      "schema": "tailor_orders",
+      "description": "Master tailoring orders collection"
     },
-    "users": {
-      "schema": "users",
-      "description": "User profiles"
+    "tailor_customers": {
+      "schema": "tailor_customers",
+      "description": "Customer profiles and measurements"
     },
-    "wishlists": {
-      "schema": "wishlists",
-      "description": "User wishlists"
+    "tailor_staff": {
+      "schema": "tailor_staff",
+      "description": "Staff tailors roster"
     },
-    "shopify_stores": {
-      "schema": "shopify_stores",
-      "description": "Connected Shopify stores database"
-    },
-    "shopify_products": {
-      "schema": "shopify_products",
-      "description": "Harvested Shopify products collection"
-    },
-    "auto_products": {
-      "schema": "auto_products",
-      "description": "Auto crawler harvested product catalog"
-    },
-    "crawl_jobs": {
-      "schema": "crawl_jobs",
-      "description": "Auto crawler job tracker queue"
+    "shop_profiles": {
+      "schema": "shop_profiles",
+      "description": "Shop profile and business configuration"
     }
   }
 }
-

@@ -15,13 +15,89 @@ import {
   INITIAL_SHOP_PROFILE,
   INITIAL_REVENUE_ANALYTICS,
 } from '../data/mockTailorData';
+import { db, auth } from './firebase';
+import {
+  collection,
+  doc,
+  onSnapshot,
+  setDoc,
+  deleteDoc,
+  getDocs,
+  getDocFromServer,
+  Unsubscribe,
+} from 'firebase/firestore';
 
 const ORDERS_KEY = 'shopscoper_room_orders_v3';
 const CUSTOMERS_KEY = 'shopscoper_room_customers_v3';
 const TAILORS_KEY = 'shopscoper_room_tailors_v3';
 const SHOP_PROFILE_KEY = 'shopscoper_room_profile_v3';
 const AUTH_SESSION_KEY = 'shopscoper_room_auth_session_v3';
-const SYNC_STATE_KEY = 'shopscoper_room_sync_v3';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo:
+        auth.currentUser?.providerData?.map((provider) => ({
+          providerId: provider.providerId,
+          email: provider.email,
+        })) || [],
+    },
+    operationType,
+    path,
+  };
+  console.warn('Firestore Operation Notice: ', JSON.stringify(errInfo));
+}
+
+function sanitizeForFirestore(obj: any): any {
+  if (obj === undefined) return null;
+  if (obj === null) return null;
+  if (Array.isArray(obj)) {
+    return obj.map(sanitizeForFirestore);
+  }
+  if (typeof obj === 'object' && !(obj instanceof Date)) {
+    const clean: Record<string, any> = {};
+    for (const key of Object.keys(obj)) {
+      const val = obj[key];
+      if (val !== undefined) {
+        clean[key] = sanitizeForFirestore(val);
+      }
+    }
+    return clean;
+  }
+  return obj;
+}
 
 export class LocalRoomDatabase {
   private listeners: Set<() => void> = new Set();
@@ -30,8 +106,16 @@ export class LocalRoomDatabase {
   private inMemoryTailors: StaffTailor[] | null = null;
   private inMemoryShopProfile: ShopProfile | null = null;
 
+  private unsubOrders: Unsubscribe | null = null;
+  private unsubCustomers: Unsubscribe | null = null;
+  private unsubTailors: Unsubscribe | null = null;
+  private unsubShopProfile: Unsubscribe | null = null;
+  private isFirestoreConnected: boolean = false;
+  private hasSeededInitialData: boolean = false;
+
   constructor() {
     this.initDefaults();
+    this.initFirestoreLiveSync();
   }
 
   private safeSetItem(key: string, value: string): boolean {
@@ -39,7 +123,7 @@ export class LocalRoomDatabase {
       localStorage.setItem(key, value);
       return true;
     } catch (e) {
-      console.warn(`LocalStorage quota exceeded notice for key "${key}":`, e);
+      console.warn(`LocalStorage quota notice for key "${key}":`, e);
       return false;
     }
   }
@@ -60,19 +144,140 @@ export class LocalRoomDatabase {
     this.purgeOldStorage();
     try {
       if (!localStorage.getItem(ORDERS_KEY)) {
-        this.safeSetItem(ORDERS_KEY, JSON.stringify([]));
+        this.safeSetItem(ORDERS_KEY, JSON.stringify(INITIAL_ORDERS));
       }
       if (!localStorage.getItem(CUSTOMERS_KEY)) {
-        this.safeSetItem(CUSTOMERS_KEY, JSON.stringify([]));
+        this.safeSetItem(CUSTOMERS_KEY, JSON.stringify(INITIAL_CUSTOMERS));
       }
       if (!localStorage.getItem(TAILORS_KEY)) {
-        this.safeSetItem(TAILORS_KEY, JSON.stringify([]));
+        this.safeSetItem(TAILORS_KEY, JSON.stringify(INITIAL_STAFF_TAILORS));
       }
       if (!localStorage.getItem(SHOP_PROFILE_KEY)) {
         this.safeSetItem(SHOP_PROFILE_KEY, JSON.stringify(INITIAL_SHOP_PROFILE));
       }
     } catch (e) {
       console.warn('LocalStorage init notice:', e);
+    }
+  }
+
+  // --- Real-Time Live Firestore Synchronization ---
+  private async initFirestoreLiveSync() {
+    try {
+      // Test connectivity
+      try {
+        await getDocFromServer(doc(db, 'tailor_system', 'connectivity'));
+        this.isFirestoreConnected = true;
+      } catch (err) {
+        // Tolerant if doc doesn't exist yet
+        this.isFirestoreConnected = true;
+      }
+
+      // 1. Live Orders Listener
+      const ordersCol = collection(db, 'tailor_orders');
+      this.unsubOrders = onSnapshot(
+        ordersCol,
+        async (snapshot) => {
+          if (!snapshot.empty) {
+            const liveOrders: TailorOrder[] = snapshot.docs.map((docSnap) => {
+              const data = docSnap.data() as TailorOrder;
+              return { ...data, id: docSnap.id };
+            });
+
+            // Sort by createdAt / updated descending
+            liveOrders.sort((a, b) => {
+              const timeA = new Date(a.updatedAt || a.createdDate).getTime();
+              const timeB = new Date(b.updatedAt || b.createdDate).getTime();
+              return timeB - timeA;
+            });
+
+            this.inMemoryOrders = liveOrders;
+            this.persistOrders(liveOrders);
+            this.notify();
+          } else if (!this.hasSeededInitialData) {
+            // First time empty cloud database: Seed initial orders to Firestore
+            this.hasSeededInitialData = true;
+            const currentOrders = this.getOrders();
+            for (const order of currentOrders) {
+              await setDoc(doc(db, 'tailor_orders', order.id), sanitizeForFirestore(order), { merge: true });
+            }
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, 'tailor_orders');
+        }
+      );
+
+      // 2. Live Customers Listener
+      const customersCol = collection(db, 'tailor_customers');
+      this.unsubCustomers = onSnapshot(
+        customersCol,
+        async (snapshot) => {
+          if (!snapshot.empty) {
+            const liveCustomers: TailorCustomer[] = snapshot.docs.map((docSnap) => {
+              const data = docSnap.data() as TailorCustomer;
+              return { ...data, id: docSnap.id };
+            });
+            this.inMemoryCustomers = liveCustomers;
+            this.persistCustomers(liveCustomers);
+            this.notify();
+          } else {
+            const currentCust = this.getCustomers();
+            for (const cust of currentCust) {
+              await setDoc(doc(db, 'tailor_customers', cust.id), sanitizeForFirestore(cust), { merge: true });
+            }
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, 'tailor_customers');
+        }
+      );
+
+      // 3. Live Staff Tailors Listener
+      const tailorsCol = collection(db, 'tailor_staff');
+      this.unsubTailors = onSnapshot(
+        tailorsCol,
+        async (snapshot) => {
+          if (!snapshot.empty) {
+            const liveTailors: StaffTailor[] = snapshot.docs.map((docSnap) => {
+              const data = docSnap.data() as StaffTailor;
+              return { ...data, id: docSnap.id };
+            });
+            this.inMemoryTailors = liveTailors;
+            this.persistTailors(liveTailors);
+            this.notify();
+          } else {
+            const currentTailors = this.getTailors();
+            for (const t of currentTailors) {
+              await setDoc(doc(db, 'tailor_staff', t.id), sanitizeForFirestore(t), { merge: true });
+            }
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, 'tailor_staff');
+        }
+      );
+
+      // 4. Live Shop Profile Listener
+      const shopProfileDoc = doc(db, 'shop_profiles', 'main');
+      this.unsubShopProfile = onSnapshot(
+        shopProfileDoc,
+        async (snapshot) => {
+          if (snapshot.exists()) {
+            const liveProfile = snapshot.data() as ShopProfile;
+            this.inMemoryShopProfile = liveProfile;
+            this.persistShopProfile(liveProfile);
+            this.notify();
+          } else {
+            const currentProfile = this.getShopProfile();
+            await setDoc(shopProfileDoc, sanitizeForFirestore(currentProfile), { merge: true });
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, 'shop_profiles/main');
+        }
+      );
+    } catch (e) {
+      console.warn('Firestore live sync init notice:', e);
     }
   }
 
@@ -92,13 +297,11 @@ export class LocalRoomDatabase {
       return;
     }
 
-    // Tier 1: Purge old versions
     this.purgeOldStorage();
     if (this.safeSetItem(ORDERS_KEY, rawJson)) {
       return;
     }
 
-    // Tier 2: Trim heavy base64 strings (audio / images)
     const trimmedOrders = orders.map((o) => {
       const item = { ...o };
       if (item.voiceNoteUrl && item.voiceNoteUrl.length > 50000) {
@@ -120,7 +323,6 @@ export class LocalRoomDatabase {
       return;
     }
 
-    // Tier 3: Store only top 30 recent orders in localStorage
     const recentOrders = trimmedOrders.slice(0, 30);
     this.safeSetItem(ORDERS_KEY, JSON.stringify(recentOrders));
   }
@@ -146,7 +348,7 @@ export class LocalRoomDatabase {
     this.safeSetItem(SHOP_PROFILE_KEY, JSON.stringify(profile));
   }
 
-  // --- Orders CRUD ---
+  // --- Orders CRUD with Live Cloud Sync ---
   public getOrders(): TailorOrder[] {
     if (this.inMemoryOrders !== null) {
       return this.inMemoryOrders;
@@ -160,23 +362,33 @@ export class LocalRoomDatabase {
     return this.inMemoryOrders || INITIAL_ORDERS;
   }
 
-  public saveOrder(order: TailorOrder): void {
+  public async saveOrder(order: TailorOrder): Promise<void> {
+    const nowIso = new Date().toISOString();
+    const updatedOrder = { ...order, updatedAt: nowIso };
+
     const orders = [...this.getOrders()];
     const index = orders.findIndex((o) => o.id === order.id);
     if (index >= 0) {
-      orders[index] = { ...order, updatedAt: new Date().toISOString() };
+      orders[index] = updatedOrder;
     } else {
-      orders.unshift({ ...order, updatedAt: new Date().toISOString() });
+      orders.unshift(updatedOrder);
     }
     this.inMemoryOrders = orders;
     this.persistOrders(orders);
 
-    // Also auto update or create customer history
-    this.syncCustomerFromOrder(order);
+    // Auto update customer
+    this.syncCustomerFromOrder(updatedOrder);
     this.notify();
+
+    // Async write to Firestore
+    try {
+      await setDoc(doc(db, 'tailor_orders', order.id), sanitizeForFirestore(updatedOrder), { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `tailor_orders/${order.id}`);
+    }
   }
 
-  public updateOrderStatus(orderId: string, status: TailorOrder['status']): void {
+  public async updateOrderStatus(orderId: string, status: TailorOrder['status']): Promise<void> {
     const orders = [...this.getOrders()];
     const order = orders.find((o) => o.id === orderId);
     if (order) {
@@ -188,16 +400,30 @@ export class LocalRoomDatabase {
       this.inMemoryOrders = orders;
       this.persistOrders(orders);
       this.notify();
+
+      try {
+        await setDoc(
+          doc(db, 'tailor_orders', orderId),
+          sanitizeForFirestore({
+            status: order.status,
+            deliveredDate: order.deliveredDate || null,
+            updatedAt: order.updatedAt,
+          }),
+          { merge: true }
+        );
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `tailor_orders/${orderId}`);
+      }
     }
   }
 
-  public deliverOrderWithSettlement(
+  public async deliverOrderWithSettlement(
     orderId: string,
     balancePaymentReceived: number,
     paymentMode: PaymentMode,
     stitchedPhotos: string[],
     notes?: string
-  ): void {
+  ): Promise<void> {
     const orders = [...this.getOrders()];
     const order = orders.find((o) => o.id === orderId);
     if (order) {
@@ -224,10 +450,23 @@ export class LocalRoomDatabase {
       this.persistOrders(orders);
       this.syncCustomerFromOrder(order);
       this.notify();
+
+      try {
+        await setDoc(doc(db, 'tailor_orders', orderId), sanitizeForFirestore(order), { merge: true });
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, `tailor_orders/${orderId}`);
+      }
     }
   }
 
-  public updateOrderAssignment(orderId: string, assignedTailor: string, estimatedHours: number, offerMessage: string, dueDate: string, dueTime: string): void {
+  public async updateOrderAssignment(
+    orderId: string,
+    assignedTailor: string,
+    estimatedHours: number,
+    offerMessage: string,
+    dueDate: string,
+    dueTime: string
+  ): Promise<void> {
     const orders = [...this.getOrders()];
     const order = orders.find((o) => o.id === orderId);
     if (order) {
@@ -240,10 +479,27 @@ export class LocalRoomDatabase {
       this.inMemoryOrders = orders;
       this.persistOrders(orders);
       this.notify();
+
+      try {
+        await setDoc(
+          doc(db, 'tailor_orders', orderId),
+          sanitizeForFirestore({
+            assignedTailor,
+            estimatedHours,
+            offerMessage,
+            dueDate,
+            dueTime,
+            updatedAt: order.updatedAt,
+          }),
+          { merge: true }
+        );
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `tailor_orders/${orderId}`);
+      }
     }
   }
 
-  public updateOrderDueDate(orderId: string, dueDate: string, dueTime?: string): void {
+  public async updateOrderDueDate(orderId: string, dueDate: string, dueTime?: string): Promise<void> {
     const orders = [...this.getOrders()];
     const order = orders.find((o) => o.id === orderId);
     if (order) {
@@ -255,14 +511,34 @@ export class LocalRoomDatabase {
       this.inMemoryOrders = orders;
       this.persistOrders(orders);
       this.notify();
+
+      try {
+        await setDoc(
+          doc(db, 'tailor_orders', orderId),
+          sanitizeForFirestore({
+            dueDate,
+            dueTime: order.dueTime,
+            updatedAt: order.updatedAt,
+          }),
+          { merge: true }
+        );
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `tailor_orders/${orderId}`);
+      }
     }
   }
 
-  public deleteOrder(orderId: string): void {
+  public async deleteOrder(orderId: string): Promise<void> {
     const orders = this.getOrders().filter((o) => o.id !== orderId);
     this.inMemoryOrders = orders;
     this.persistOrders(orders);
     this.notify();
+
+    try {
+      await deleteDoc(doc(db, 'tailor_orders', orderId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `tailor_orders/${orderId}`);
+    }
   }
 
   // --- Customers CRUD ---
@@ -279,7 +555,7 @@ export class LocalRoomDatabase {
     return this.inMemoryCustomers || INITIAL_CUSTOMERS;
   }
 
-  public saveCustomer(customer: TailorCustomer): void {
+  public async saveCustomer(customer: TailorCustomer): Promise<void> {
     const customers = [...this.getCustomers()];
     const index = customers.findIndex((c) => c.phone === customer.phone || c.id === customer.id);
     if (index >= 0) {
@@ -290,11 +566,19 @@ export class LocalRoomDatabase {
     this.inMemoryCustomers = customers;
     this.persistCustomers(customers);
     this.notify();
+
+    try {
+      await setDoc(doc(db, 'tailor_customers', customer.id), sanitizeForFirestore(customer), { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `tailor_customers/${customer.id}`);
+    }
   }
 
-  private syncCustomerFromOrder(order: TailorOrder) {
+  private async syncCustomerFromOrder(order: TailorOrder) {
     const customers = [...this.getCustomers()];
     const existing = customers.find((c) => c.phone === order.customerPhone);
+    let targetCustomer: TailorCustomer;
+
     if (existing) {
       existing.ordersCount += 1;
       existing.lastOrderDate = order.createdDate;
@@ -303,8 +587,9 @@ export class LocalRoomDatabase {
       if (Object.keys(order.measurements).length > 0) {
         existing.measurements = { ...existing.measurements, ...order.measurements };
       }
+      targetCustomer = existing;
     } else {
-      customers.unshift({
+      targetCustomer = {
         id: `cust-${Date.now()}`,
         name: order.customerName || 'Customer',
         phone: order.customerPhone,
@@ -315,10 +600,17 @@ export class LocalRoomDatabase {
         gender: order.genderCategory,
         measurements: order.measurements,
         createdAt: new Date().toISOString(),
-      });
+      };
+      customers.unshift(targetCustomer);
     }
     this.inMemoryCustomers = customers;
     this.persistCustomers(customers);
+
+    try {
+      await setDoc(doc(db, 'tailor_customers', targetCustomer.id), sanitizeForFirestore(targetCustomer), { merge: true });
+    } catch (e) {
+      // background error handled gracefully
+    }
   }
 
   // --- Staff Tailors CRUD ---
@@ -333,12 +625,10 @@ export class LocalRoomDatabase {
       const data = localStorage.getItem(TAILORS_KEY);
       const parsed: StaffTailor[] = data ? JSON.parse(data) : [];
       
-      // Filter out any mock dummy tailors from existing local storage
       const realTailors = parsed.filter(
         (t) => !mockNames.has(t.name.toLowerCase()) && !mockIds.has(t.id)
       );
 
-      // Ensure Self (Owner) is present
       if (!realTailors.some((t) => t.role === 'Owner' || t.name === 'Self (Owner)')) {
         realTailors.unshift({
           id: 'tailor-owner',
@@ -358,7 +648,7 @@ export class LocalRoomDatabase {
     return this.inMemoryTailors || INITIAL_STAFF_TAILORS;
   }
 
-  public addTailor(name: string, phone: string, role: 'Owner' | 'Tailor' = 'Tailor'): void {
+  public async addTailor(name: string, phone: string, role: 'Owner' | 'Tailor' = 'Tailor'): Promise<void> {
     const tailors = [...this.getTailors()];
     const initials = name
       .split(' ')
@@ -367,26 +657,39 @@ export class LocalRoomDatabase {
       .substring(0, 2)
       .toUpperCase();
 
-    tailors.push({
+    const newTailor: StaffTailor = {
       id: `tailor-${Date.now()}`,
       name,
       phone,
       role,
       initials: initials || 'TL',
       activeOrdersCount: 0,
-    });
+    };
+
+    tailors.push(newTailor);
     this.inMemoryTailors = tailors;
     this.persistTailors(tailors);
     this.notify();
+
+    try {
+      await setDoc(doc(db, 'tailor_staff', newTailor.id), sanitizeForFirestore(newTailor), { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `tailor_staff/${newTailor.id}`);
+    }
   }
 
-  public deleteTailor(tailorId: string): void {
+  public async deleteTailor(tailorId: string): Promise<void> {
     const current = this.getTailors();
-    // Do not delete Self (Owner)
     const updated = current.filter((t) => t.id !== tailorId || t.role === 'Owner');
     this.inMemoryTailors = updated;
     this.persistTailors(updated);
     this.notify();
+
+    try {
+      await deleteDoc(doc(db, 'tailor_staff', tailorId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `tailor_staff/${tailorId}`);
+    }
   }
 
   // --- Shop Profile CRUD ---
@@ -403,15 +706,21 @@ export class LocalRoomDatabase {
     return this.inMemoryShopProfile || INITIAL_SHOP_PROFILE;
   }
 
-  public updateShopProfile(profile: Partial<ShopProfile>): void {
+  public async updateShopProfile(profile: Partial<ShopProfile>): Promise<void> {
     const current = this.getShopProfile();
     const updated = { ...current, ...profile };
     this.inMemoryShopProfile = updated;
     this.persistShopProfile(updated);
     this.notify();
+
+    try {
+      await setDoc(doc(db, 'shop_profiles', 'main'), sanitizeForFirestore(updated), { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'shop_profiles/main');
+    }
   }
 
-  // --- Auth Session Persistence (Keep logged in across refreshes & sessions) ---
+  // --- Auth Session Persistence ---
   public getAuthSession(): AuthSessionState | null {
     try {
       const data = localStorage.getItem(AUTH_SESSION_KEY);
@@ -468,11 +777,9 @@ export class LocalRoomDatabase {
         pendingCount++;
       }
 
-      // Modes
       const mode = ord.paymentMode || 'Cash';
       modeMap[mode] = (modeMap[mode] || 0) + ord.advancePaid;
 
-      // Services
       const svc = ord.garmentType || 'Other';
       if (!serviceMap[svc]) serviceMap[svc] = { count: 0, revenue: 0 };
       serviceMap[svc].count += 1;
@@ -506,22 +813,45 @@ export class LocalRoomDatabase {
     };
   }
 
-  // --- Cloud Sync Simulator ---
+  // --- Cloud Sync Manual Trigger ---
   public async triggerCloudSync(): Promise<{ success: boolean; lastSynced: string }> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const now = new Date().toLocaleString('en-IN', {
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: true,
+    try {
+      const snap = await getDocs(collection(db, 'tailor_orders'));
+      if (!snap.empty) {
+        const liveOrders: TailorOrder[] = snap.docs.map((d) => ({ ...(d.data() as TailorOrder), id: d.id }));
+        liveOrders.sort((a, b) => {
+          const timeA = new Date(a.updatedAt || a.createdDate).getTime();
+          const timeB = new Date(b.updatedAt || b.createdDate).getTime();
+          return timeB - timeA;
         });
-        this.updateShopProfile({ lastSyncedTimestamp: now });
-        resolve({ success: true, lastSynced: now });
-      }, 1200);
-    });
+        this.inMemoryOrders = liveOrders;
+        this.persistOrders(liveOrders);
+        this.notify();
+      }
+
+      const now = new Date().toLocaleString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      });
+      await this.updateShopProfile({ lastSyncedTimestamp: now });
+      return { success: true, lastSynced: now };
+    } catch (e) {
+      console.warn('Manual sync fallback:', e);
+      const now = new Date().toLocaleString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      });
+      await this.updateShopProfile({ lastSyncedTimestamp: now });
+      return { success: true, lastSynced: now };
+    }
   }
 }
 
