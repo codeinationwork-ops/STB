@@ -242,6 +242,7 @@ export const LivePublicCataloguePage: React.FC<LivePublicCataloguePageProps> = (
             inventory={inventory}
             customerPhone={cleanPhone}
             customerName="Customer"
+            isLoading={isLiveLoading}
           />
         </main>
       ) : (
