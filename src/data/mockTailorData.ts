@@ -1,4 +1,4 @@
-import { TailorOrder, TailorCustomer, StaffTailor, ShopProfile, RevenueAnalytics } from '../types';
+import { TailorOrder, TailorCustomer, StaffTailor, ShopProfile, RevenueAnalytics, MarketplaceProduct, InventoryItem } from '../types';
 
 export const INITIAL_SHOP_PROFILE: ShopProfile = {
   shopName: '',
@@ -11,13 +11,13 @@ export const INITIAL_SHOP_PROFILE: ShopProfile = {
   lastSyncedTimestamp: '',
 };
 
-export const INITIAL_STAFF_TAILORS: StaffTailor[] = [
-  { id: 'tailor-owner', name: 'Self (Owner)', phone: '', role: 'Owner', initials: 'SO', activeOrdersCount: 0 },
-];
+export const INITIAL_STAFF_TAILORS: StaffTailor[] = [];
 
 export const INITIAL_CUSTOMERS: TailorCustomer[] = [];
 
 export const INITIAL_ORDERS: TailorOrder[] = [];
+
+export const INITIAL_MARKETPLACE_PRODUCTS: MarketplaceProduct[] = [];
 
 export const INITIAL_REVENUE_ANALYTICS: RevenueAnalytics = {
   totalRevenue: 0,
@@ -34,3 +34,7 @@ export const INITIAL_REVENUE_ANALYTICS: RevenueAnalytics = {
   topServices: [],
   paymentModes: [],
 };
+
+export const INITIAL_INVENTORY_ITEMS: InventoryItem[] = [];
+
+

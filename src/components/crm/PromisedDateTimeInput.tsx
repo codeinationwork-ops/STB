@@ -1,5 +1,13 @@
 import React from 'react';
 import { Calendar, Clock, Sparkles } from 'lucide-react';
+import {
+  formatDisplayDate,
+  formatFullReadableDate,
+  getLocalDateStr,
+  normalizeDateStr,
+} from '../../lib/dateUtils';
+
+export { formatDisplayDate, formatFullReadableDate, getLocalDateStr, normalizeDateStr };
 
 interface PromisedDateTimeInputProps {
   date: string; // YYYY-MM-DD
@@ -15,17 +23,6 @@ interface PromisedDateTimeInputProps {
   className?: string;
 }
 
-// Convert YYYY-MM-DD to DD-MM-YYYY
-export const formatDisplayDate = (isoDate: string): string => {
-  if (!isoDate) return '';
-  const parts = isoDate.split('-');
-  if (parts.length === 3) {
-    const [y, m, d] = parts;
-    return `${d}-${m}-${y}`;
-  }
-  return isoDate;
-};
-
 // Convert HH:mm to 12-hour AM/PM format (e.g. 10:00 -> 10:00 AM, 18:00 -> 06:00 PM)
 export const formatDisplayTime = (timeStr: string): string => {
   if (!timeStr) return '';
@@ -36,23 +33,6 @@ export const formatDisplayTime = (timeStr: string): string => {
   const ampm = h >= 12 ? 'PM' : 'AM';
   const displayH = h % 12 === 0 ? 12 : h % 12;
   return `${displayH < 10 ? '0' : ''}${displayH}:${mins} ${ampm}`;
-};
-
-// Format full readable date e.g. "Wednesday, 19 Aug 2026"
-export const formatFullReadableDate = (isoDate: string): string => {
-  if (!isoDate) return '';
-  try {
-    const [y, m, d] = isoDate.split('-').map(Number);
-    const dateObj = new Date(y, m - 1, d);
-    return dateObj.toLocaleDateString('en-IN', {
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-    });
-  } catch {
-    return isoDate;
-  }
 };
 
 export const PromisedDateTimeInput: React.FC<PromisedDateTimeInputProps> = ({
@@ -252,7 +232,7 @@ export const PromisedDateTimeInput: React.FC<PromisedDateTimeInputProps> = ({
                 </span>
               </div>
               <span className="text-[10px] bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded-full">
-                {freeWorkersCount} Karigar{freeWorkersCount !== 1 ? 's' : ''} Free {estimatedHours ? `(${estimatedHours}h order)` : ''}
+                {estimatedHours ? `${estimatedHours}h Estimated Work` : 'Capacity Available'}
               </span>
             </div>
           ) : null}

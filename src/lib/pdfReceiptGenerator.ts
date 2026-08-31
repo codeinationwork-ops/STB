@@ -18,17 +18,17 @@ export function buildOrderReceiptPdf(order: TailorOrder, shopProfile?: ShopProfi
   const shopAddress = shopProfile?.address || 'Main Market, City Center';
   const shopPhone = shopProfile?.phoneNumber || '';
 
-  // Background Accent Header Banner (#0B4636 Emerald)
-  doc.setFillColor(11, 70, 54);
+  // Background Accent Header Banner (Emerald 800)
+  doc.setFillColor(6, 95, 70);
   doc.rect(0, 0, pageWidth, 32, 'F');
 
   // Shop Branding in Header
-  doc.setTextColor(251, 191, 36); // Amber Gold
+  doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
   doc.text(shopName.toUpperCase(), pageWidth / 2, 10, { align: 'center' });
 
-  doc.setTextColor(255, 255, 255);
+  doc.setTextColor(236, 253, 245);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   if (ownerName) {
@@ -40,9 +40,9 @@ export function buildOrderReceiptPdf(order: TailorOrder, shopProfile?: ShopProfi
   }
 
   // Official Receipt Badge
-  doc.setFillColor(251, 191, 36);
+  doc.setFillColor(255, 255, 255);
   doc.roundedRect(pageWidth / 2 - 35, 25, 70, 6, 2, 2, 'F');
-  doc.setTextColor(11, 70, 54);
+  doc.setTextColor(6, 95, 70);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.5);
   doc.text('OFFICIAL CUSTOMER ORDER RECEIPT', pageWidth / 2, 29, { align: 'center' });
@@ -62,7 +62,7 @@ export function buildOrderReceiptPdf(order: TailorOrder, shopProfile?: ShopProfi
   doc.text('CUSTOMER NAME', 12, y + 14);
   doc.text('MOBILE PHONE', pageWidth / 2 + 2, y + 14);
 
-  doc.setTextColor(11, 70, 54);
+  doc.setTextColor(6, 95, 70);
   doc.setFontSize(9);
   doc.text(order.id, 12, y + 9);
   doc.text(`${order.createdDate} (${order.createdTime || ''})`, pageWidth / 2 + 2, y + 9);
@@ -74,75 +74,128 @@ export function buildOrderReceiptPdf(order: TailorOrder, shopProfile?: ShopProfi
 
   y += 24;
 
-  // Garment Details Section
-  doc.setFillColor(255, 251, 235);
-  doc.setDrawColor(254, 243, 199);
-  doc.roundedRect(8, y, pageWidth - 16, 18, 2, 2, 'FD');
+  // Garment Details / Sale Items Section
+  const isSaleOrder = order.orderCategory === 'Sale' || (order.saleItems && order.saleItems.length > 0);
 
-  doc.setTextColor(11, 70, 54);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text(`Garment: ${order.garmentType}`, 12, y + 6);
+  if (isSaleOrder && order.saleItems && order.saleItems.length > 0) {
+    // Retail Invoice Table Header
+    doc.setFillColor(243, 232, 255); // Purple light
+    doc.setDrawColor(216, 180, 254);
+    doc.roundedRect(8, y, pageWidth - 16, 8, 1.5, 1.5, 'FD');
 
-  // Category Tag
-  doc.setFillColor(11, 70, 54);
-  doc.roundedRect(pageWidth - 45, y + 2, 33, 5, 1.5, 1.5, 'F');
-  doc.setTextColor(251, 191, 36);
-  doc.setFontSize(6.5);
-  doc.text((order.orderCategory || 'NEW STITCH').toUpperCase(), pageWidth - 28.5, y + 5.5, { align: 'center' });
-
-  doc.setTextColor(51, 65, 85);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.text(`Style / Fitting: ${order.subTypeStyle || 'Standard Fitting'}`, 12, y + 11);
-  if (order.specialNotes) {
-    doc.text(`Notes: ${order.specialNotes.slice(0, 55)}`, 12, y + 15);
-  }
-
-  y += 22;
-
-  // Measurements Grid (if any)
-  const validMeasurements = Object.entries(order.measurements || {}).filter(
-    ([_, v]) => typeof v === 'string' && v.trim() !== ''
-  );
-
-  if (validMeasurements.length > 0) {
-    doc.setTextColor(11, 70, 54);
+    doc.setTextColor(107, 33, 168);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.text('RECORDED MEASUREMENTS (INCHES)', 10, y + 2);
-    y += 4;
+    doc.setFontSize(7.5);
+    doc.text('ITEM DESCRIPTION', 12, y + 5.5);
+    doc.text('QTY', pageWidth / 2 + 10, y + 5.5, { align: 'center' });
+    doc.text('RATE', pageWidth - 32, y + 5.5, { align: 'right' });
+    doc.text('TOTAL', pageWidth - 12, y + 5.5, { align: 'right' });
 
-    const colWidth = (pageWidth - 20) / 3;
-    const rowHeight = 6;
-    let col = 0;
-    let rowY = y;
+    y += 9;
 
-    validMeasurements.forEach(([mKey, mVal]) => {
-      const xPos = 10 + col * colWidth;
-      doc.setFillColor(248, 250, 252);
+    // Line items
+    order.saleItems.forEach((item, idx) => {
+      const itemBg = idx % 2 === 0 ? 255 : 248;
+      doc.setFillColor(itemBg, itemBg, itemBg);
       doc.setDrawColor(226, 232, 240);
-      doc.roundedRect(xPos, rowY, colWidth - 2, rowHeight, 1, 1, 'FD');
+      doc.roundedRect(8, y, pageWidth - 16, 7, 1, 1, 'FD');
 
-      doc.setTextColor(71, 85, 105);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6.5);
-      const cleanKey = mKey.replace(/([A-Z])/g, ' $1').toLowerCase();
-      doc.text(cleanKey.slice(0, 14), xPos + 2, rowY + 4);
-
-      doc.setTextColor(11, 70, 54);
+      doc.setTextColor(15, 23, 42);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7.5);
-      doc.text(String(mVal), xPos + colWidth - 4, rowY + 4, { align: 'right' });
+      doc.text(item.name.slice(0, 32), 12, y + 4.5);
 
-      col++;
-      if (col >= 3) {
-        col = 0;
-        rowY += rowHeight + 1.5;
-      }
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(71, 85, 105);
+      doc.text(String(item.quantity || 1), pageWidth / 2 + 10, y + 4.5, { align: 'center' });
+      doc.text(`INR ${item.unitPrice || 0}`, pageWidth - 32, y + 4.5, { align: 'right' });
+
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(6, 95, 70);
+      const lineTotal = (item.quantity || 1) * (item.unitPrice || 0) - (item.discount || 0);
+      doc.text(`INR ${lineTotal}`, pageWidth - 12, y + 4.5, { align: 'right' });
+
+      y += 8;
     });
 
-    y = col === 0 ? rowY + 2 : rowY + rowHeight + 3.5;
+    if (order.specialNotes) {
+      doc.setTextColor(100, 116, 139);
+      doc.setFont('helvetica', 'italic');
+      doc.setFontSize(6.5);
+      doc.text(`Notes: ${order.specialNotes.slice(0, 70)}`, 12, y + 2);
+      y += 5;
+    }
+  } else {
+    // Garment Details Section for Stitching / Alteration
+    doc.setFillColor(240, 253, 244);
+    doc.setDrawColor(187, 247, 208);
+    doc.roundedRect(8, y, pageWidth - 16, 18, 2, 2, 'FD');
+
+    doc.setTextColor(6, 95, 70);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text(`Garment: ${order.garmentType}`, 12, y + 6);
+
+    // Category Tag
+    doc.setFillColor(6, 95, 70);
+    doc.roundedRect(pageWidth - 45, y + 2, 33, 5, 1.5, 1.5, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(6.5);
+    doc.text((order.orderCategory || 'NEW STITCH').toUpperCase(), pageWidth - 28.5, y + 5.5, { align: 'center' });
+
+    doc.setTextColor(51, 65, 85);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(`Style / Fitting: ${order.subTypeStyle || 'Standard Fitting'}`, 12, y + 11);
+    if (order.specialNotes) {
+      doc.text(`Notes: ${order.specialNotes.slice(0, 55)}`, 12, y + 15);
+    }
+
+    y += 22;
+
+    // Measurements Grid (if any)
+    const validMeasurements = Object.entries(order.measurements || {}).filter(
+      ([_, v]) => typeof v === 'string' && v.trim() !== ''
+    );
+
+    if (validMeasurements.length > 0) {
+      doc.setTextColor(6, 95, 70);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.text('RECORDED MEASUREMENTS (INCHES)', 10, y + 2);
+      y += 4;
+
+      const colWidth = (pageWidth - 20) / 3;
+      const rowHeight = 6;
+      let col = 0;
+      let rowY = y;
+
+      validMeasurements.forEach(([mKey, mVal]) => {
+        const xPos = 10 + col * colWidth;
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(226, 232, 240);
+        doc.roundedRect(xPos, rowY, colWidth - 2, rowHeight, 1, 1, 'FD');
+
+        doc.setTextColor(71, 85, 105);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.5);
+        const cleanKey = mKey.replace(/([A-Z])/g, ' $1').toLowerCase();
+        doc.text(cleanKey.slice(0, 14), xPos + 2, rowY + 4);
+
+        doc.setTextColor(6, 95, 70);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7.5);
+        doc.text(String(mVal), xPos + colWidth - 4, rowY + 4, { align: 'right' });
+
+        col++;
+        if (col >= 3) {
+          col = 0;
+          rowY += rowHeight + 1.5;
+        }
+      });
+
+      y = col === 0 ? rowY + 2 : rowY + rowHeight + 3.5;
+    }
   }
 
   // Financial Ledger Table
@@ -150,10 +203,42 @@ export function buildOrderReceiptPdf(order: TailorOrder, shopProfile?: ShopProfi
   doc.line(8, y, pageWidth - 8, y);
   y += 5;
 
+  if (typeof order.subtotalAmount === 'number' && order.subtotalAmount > 0) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Items Subtotal:', 12, y);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text(`INR ${order.subtotalAmount}`, pageWidth - 12, y, { align: 'right' });
+    y += 4.5;
+  }
+
+  if (typeof order.discountAmount === 'number' && order.discountAmount > 0) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(220, 38, 38);
+    doc.text('Discount Applied:', 12, y);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`- INR ${order.discountAmount}`, pageWidth - 12, y, { align: 'right' });
+    y += 4.5;
+  }
+
+  if (typeof order.taxAmount === 'number' && order.taxAmount > 0) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(100, 116, 139);
+    doc.text('GST / Tax:', 12, y);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text(`+ INR ${order.taxAmount}`, pageWidth - 12, y, { align: 'right' });
+    y += 4.5;
+  }
+
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(51, 65, 85);
-  doc.text('Total Order Charge:', 12, y);
+  doc.text('Total Invoice / Order Charge:', 12, y);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42);
   doc.text(`INR ${order.totalAmount}`, pageWidth - 12, y, { align: 'right' });
@@ -161,30 +246,45 @@ export function buildOrderReceiptPdf(order: TailorOrder, shopProfile?: ShopProfi
   y += 5;
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(4, 120, 87);
-  doc.text(`Advance Paid (${order.paymentMode || 'Cash'}):`, 12, y);
+  doc.text(`Amount Paid (${order.paymentMode || 'Cash'}):`, 12, y);
   doc.setFont('helvetica', 'bold');
-  doc.text(`- INR ${order.advancePaid}`, pageWidth - 12, y, { align: 'right' });
+  doc.text(`INR ${order.advancePaid}`, pageWidth - 12, y, { align: 'right' });
 
   y += 4;
   // Balance Due Highlight Box
-  doc.setFillColor(255, 228, 230); // Rose light
-  doc.setDrawColor(254, 205, 211);
-  doc.roundedRect(8, y, pageWidth - 16, 11, 2, 2, 'FD');
+  if (order.balanceDue > 0) {
+    doc.setFillColor(255, 228, 230); // Rose light
+    doc.setDrawColor(254, 205, 211);
+    doc.roundedRect(8, y, pageWidth - 16, 11, 2, 2, 'FD');
 
-  doc.setTextColor(159, 18, 57);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.text('BALANCE DUE AT TRIAL / DELIVERY', 12, y + 7);
-  doc.setFontSize(11);
-  doc.text(`INR ${order.balanceDue}`, pageWidth - 12, y + 7, { align: 'right' });
+    doc.setTextColor(159, 18, 57);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.text('BALANCE DUE AT TRIAL / DELIVERY', 12, y + 7);
+    doc.setFontSize(11);
+    doc.text(`INR ${order.balanceDue}`, pageWidth - 12, y + 7, { align: 'right' });
+  } else {
+    doc.setFillColor(240, 253, 244); // Emerald light
+    doc.setDrawColor(187, 247, 208);
+    doc.roundedRect(8, y, pageWidth - 16, 9, 2, 2, 'FD');
+
+    doc.setTextColor(6, 95, 70);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.text('✓ 100% FULLY PAID AT COUNTER', 12, y + 6);
+    doc.setFontSize(9);
+    doc.text('ZERO BALANCE DUE', pageWidth - 12, y + 6, { align: 'right' });
+  }
+
+  y += 14;
 
   y += 15;
 
   // Promised Due Date Banner
-  doc.setFillColor(11, 70, 54);
+  doc.setFillColor(6, 95, 70);
   doc.roundedRect(8, y, pageWidth - 16, 12, 2, 2, 'F');
 
-  doc.setTextColor(254, 240, 138); // Yellow 200
+  doc.setTextColor(209, 250, 229); // Emerald 100
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7);
   doc.text('PROMISED DELIVERY DATE & TIME', 12, y + 4.5);
@@ -193,9 +293,9 @@ export function buildOrderReceiptPdf(order: TailorOrder, shopProfile?: ShopProfi
   doc.setFontSize(9.5);
   doc.text(`${order.dueDate} at ${order.dueTime || '18:00'}`, 12, y + 9);
 
-  doc.setFillColor(251, 191, 36);
+  doc.setFillColor(255, 255, 255);
   doc.roundedRect(pageWidth - 36, y + 3.5, 24, 5.5, 1.5, 1.5, 'F');
-  doc.setTextColor(11, 70, 54);
+  doc.setTextColor(6, 95, 70);
   doc.setFontSize(7);
   doc.text('ON TIME', pageWidth - 24, y + 7.2, { align: 'center' });
 
@@ -231,6 +331,35 @@ export function downloadReceiptPdf(order: TailorOrder, shopProfile?: ShopProfile
 export function generateWhatsAppReceiptText(order: TailorOrder, shopProfile?: ShopProfile | null): string {
   const sName = shopProfile?.shopName || 'ROYAL TAILOR BOUTIQUE';
   const sPhone = shopProfile?.phoneNumber || '';
+  const isSale = order.orderCategory === 'Sale' || (order.saleItems && order.saleItems.length > 0);
+
+  if (isSale && order.saleItems && order.saleItems.length > 0) {
+    const itemsLines = order.saleItems
+      .map(
+        (i) =>
+          `  • ${i.name} (x${i.quantity || 1}) - ₹${(i.quantity || 1) * (i.unitPrice || 0) - (i.discount || 0)}`
+      )
+      .join('\n');
+
+    return `🛍️ *RETAIL INVOICE - ${sName.toUpperCase()}* 🧾
+━━━━━━━━━━━━━━━━━━━━
+*Invoice No:* ${order.invoiceNumber || order.id}
+*Date:* ${order.createdDate} ${order.createdTime || ''}
+*Customer:* ${order.customerName} (${formatDisplayPhone(order.customerPhone)})
+
+*Purchased Items:*
+${itemsLines}
+${order.specialNotes ? `\n*Notes / Alteration:* ${order.specialNotes}` : ''}
+
+*Invoice Summary:*
+${order.subtotalAmount ? `• Subtotal: ₹${order.subtotalAmount}\n` : ''}${order.discountAmount ? `• Discount: -₹${order.discountAmount}\n` : ''}${order.taxAmount ? `• GST/Tax: +₹${order.taxAmount}\n` : ''}• *Total Bill:* ₹${order.totalAmount}
+• Amount Paid (${order.paymentMode || 'Cash'}): ₹${order.advancePaid}
+• *Balance Due:* ${order.balanceDue === 0 ? '₹0 (Fully Paid ✓)' : `₹${order.balanceDue}`}
+${sPhone ? `\n📍 Shop Helpline: ${formatDisplayPhone(sPhone)}` : ''}
+
+📄 *PDF invoice attached for your records.*
+Thank you for shopping with ${sName}!`;
+  }
 
   const nonZeroMeasurements = Object.entries(order.measurements || {})
     .filter(([_, v]) => typeof v === 'string' && v.trim() !== '')

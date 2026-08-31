@@ -8,6 +8,16 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
+  /* Monday.com Grid Lines & High Density Table Utilities */
+  .monday-table-cell {
+    border-right: 1px solid #e6e9ef;
+    border-bottom: 1px solid #e6e9ef;
+  }
+  .monday-header-cell {
+    border-right: 1px solid #e6e9ef;
+    border-bottom: 1px solid #d0d4e4;
+  }
 }
 
 @keyframes marquee {

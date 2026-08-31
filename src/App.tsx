@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Home,
-  Bell,
   Plus,
   BarChart3,
   Settings as SettingsIcon,
@@ -19,8 +18,22 @@ import {
   RevenueAnalytics,
   OrderStatus,
   PaymentMode,
+  MarketplaceProduct,
+  UploadedCatalogueDoc,
+  BoutiqueAppointment,
+  InventoryItem,
 } from './types';
 import { roomDb } from './lib/localRoomDb';
+import { getLocalDateStr, normalizeDateStr } from './lib/dateUtils';
+import { auth } from './lib/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import {
+  buildRoutePath,
+  parseRouteFromUrl,
+  setUrlPath,
+  RouteState,
+  AppScreen,
+} from './lib/appRouter';
 
 // Screens
 import { Screen1Auth } from './components/crm/Screen1Auth';
@@ -32,49 +45,185 @@ import { Screen6AssignTimeline } from './components/crm/Screen6AssignTimeline';
 import { Screen7ProfileSettings } from './components/crm/Screen7ProfileSettings';
 import { Screen8RevenueReports } from './components/crm/Screen8RevenueReports';
 import { Screen9CustomersDirectory } from './components/crm/Screen9CustomersDirectory';
-import { AndroidSourceCodeModal } from './components/crm/AndroidSourceCodeModal';
+import { ScreenMarketplaceCatalogue } from './components/crm/ScreenMarketplaceCatalogue';
+import { ScreenAppointmentsManager } from './components/crm/ScreenAppointmentsManager';
+import { ScreenInventoryManager } from './components/crm/ScreenInventoryManager';
+import { LivePublicCataloguePage } from './components/crm/LivePublicCataloguePage';
+import { OrderReceiptModal } from './components/crm/OrderReceiptModal';
+import { ModernOrderPopups, ModernOrderPopupType } from './components/crm/ModernOrderPopups';
 
 import { DesktopLayout } from './components/crm/DesktopLayout';
+import { AdminPortal } from './components/admin/AdminPortal';
+import { CustomerPortal } from './components/crm/CustomerPortal';
+import { CustomerIndexPage } from './components/crm/CustomerIndexPage';
+import { BoutiqueVerificationLockScreen } from './components/crm/BoutiqueVerificationLockScreen';
 
-type AppViewScreen =
-  | 'auth'
-  | 'dashboard'
-  | 'new_order'
-  | 'order_details'
-  | 'orders'
-  | 'overdue'
-  | 'assign_timeline'
-  | 'customers'
-  | 'profile'
-  | 'reports'
-  | 'terms'
-  | 'privacy'
-  | 'refund';
+type AppViewScreen = AppScreen;
 
 export default function App() {
   const initialSession = roomDb.getAuthSession();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => !!initialSession?.isAuthenticated);
   const [userPhone, setUserPhone] = useState<string>(() => initialSession?.phoneNumber || '');
-  const [currentScreen, setCurrentScreen] = useState<AppViewScreen>(() =>
-    initialSession?.isAuthenticated ? 'dashboard' : 'auth'
+
+  // Parse initial route from browser URL
+  const initialParsedRoute = useMemo(() => parseRouteFromUrl(!!initialSession?.isAuthenticated), []);
+
+  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() => initialParsedRoute.screen === 'admin');
+  const [currentScreen, setCurrentScreen] = useState<AppViewScreen>(() => initialParsedRoute.screen);
+  const [ordersInitialTab, setOrdersInitialTab] = useState<'all' | 'cutting' | 'stitching' | 'overdue' | 'completed' | 'archived'>(
+    () => initialParsedRoute.ordersTab || 'all'
   );
-  const [ordersInitialTab, setOrdersInitialTab] = useState<'all' | 'cutting' | 'stitching' | 'overdue' | 'completed' | 'archived'>('all');
+  const [prefilledProductForNewOrder, setPrefilledProductForNewOrder] = useState<MarketplaceProduct | null>(null);
+  const [newOrderInitialCategory, setNewOrderInitialCategory] = useState<'New Stitch' | 'Alteration' | 'Sale'>(
+    () => initialParsedRoute.newOrderCategory || 'New Stitch'
+  );
+  const [newOrderInitialMode, setNewOrderInitialMode] = useState<'stitch' | 'alter' | 'sale'>(
+    () => initialParsedRoute.newOrderMode || 'stitch'
+  );
+  const [landingSection, setLandingSection] = useState<'features' | 'how-it-works' | 'pricing' | 'testimonials' | undefined>(
+    initialParsedRoute.landingSection
+  );
+  const [landingAuthModal, setLandingAuthModal] = useState<'login' | 'signup' | 'customer' | null>(
+    (initialParsedRoute.authModal as 'login' | 'signup' | 'customer' | null) || null
+  );
+  const [routeShopPhone, setRouteShopPhone] = useState<string | undefined>(initialParsedRoute.shopPhone);
+  const [routeShopScoperCode, setRouteShopScoperCode] = useState<string | undefined>(initialParsedRoute.shopScoperCode);
+
+  const [customerPhone, setCustomerPhone] = useState<string>(() => {
+    try {
+      return localStorage.getItem('boutique_customer_phone') || '';
+    } catch {
+      return '';
+    }
+  });
 
   const [orders, setOrders] = useState<TailorOrder[]>([]);
   const [customers, setCustomers] = useState<TailorCustomer[]>([]);
   const [tailors, setTailors] = useState<StaffTailor[]>([]);
+  const [products, setProducts] = useState<MarketplaceProduct[]>([]);
+  const [catalogueDocs, setCatalogueDocs] = useState<UploadedCatalogueDoc[]>([]);
+  const [appointments, setAppointments] = useState<BoutiqueAppointment[]>([]);
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [shopProfile, setShopProfile] = useState<ShopProfile>(roomDb.getShopProfile());
   const [analytics, setAnalytics] = useState<RevenueAnalytics>(roomDb.getRevenueAnalytics());
 
   const [selectedOrder, setSelectedOrder] = useState<TailorOrder | null>(null);
-  const [showCodeModal, setShowCodeModal] = useState<boolean>(false);
+  const [receiptModalOrder, setReceiptModalOrder] = useState<TailorOrder | null>(null);
+  const [activeOrderPopup, setActiveOrderPopup] = useState<ModernOrderPopupType>(null);
 
-  // Subscribe to Room Local Storage DB
+  // Central Router Navigation Function
+  const navigate = useCallback((target: AppScreen | RouteState, replace: boolean = false) => {
+    const route: RouteState = typeof target === 'string' ? { screen: target } : target;
+
+    if (route.screen === 'admin') {
+      setIsAdminRoute(true);
+      setCurrentScreen('admin');
+      setUrlPath(route, replace);
+      return;
+    }
+
+    setIsAdminRoute(false);
+    setCurrentScreen(route.screen);
+
+    if (route.ordersTab) {
+      setOrdersInitialTab(route.ordersTab);
+    }
+    if (route.newOrderCategory) {
+      setNewOrderInitialCategory(route.newOrderCategory);
+    }
+    if (route.newOrderMode) {
+      setNewOrderInitialMode(route.newOrderMode);
+    }
+    if (route.landingSection) {
+      setLandingSection(route.landingSection);
+    }
+    if (route.authModal !== undefined) {
+      setLandingAuthModal(route.authModal);
+    }
+    if (route.shopPhone !== undefined) {
+      setRouteShopPhone(route.shopPhone);
+    }
+    if (route.shopScoperCode !== undefined) {
+      setRouteShopScoperCode(route.shopScoperCode);
+    }
+
+    if (route.orderId) {
+      const all = roomDb.getOrders();
+      const cleanTarget = route.orderId.toLowerCase().replace(/^#/, '');
+      const found = all.find(
+        (o) =>
+          o.id.toLowerCase() === route.orderId?.toLowerCase() ||
+          o.id.toLowerCase().replace(/^#/, '') === cleanTarget
+      );
+      if (found) {
+        setSelectedOrder(found);
+      }
+    }
+
+    setUrlPath(route, replace);
+  }, []);
+
+  // Listen to browser URL changes (popstate / hashchange) for back/forward navigation
+  useEffect(() => {
+    const handleLocationCheck = () => {
+      const parsed = parseRouteFromUrl(isAuthenticated);
+      if (parsed.screen === 'admin') {
+        setIsAdminRoute(true);
+        setCurrentScreen('admin');
+        return;
+      }
+
+      setIsAdminRoute(false);
+      setCurrentScreen(parsed.screen);
+
+      if (parsed.ordersTab) setOrdersInitialTab(parsed.ordersTab);
+      if (parsed.newOrderCategory) setNewOrderInitialCategory(parsed.newOrderCategory);
+      if (parsed.newOrderMode) setNewOrderInitialMode(parsed.newOrderMode);
+      if (parsed.landingSection) setLandingSection(parsed.landingSection);
+      if (parsed.authModal !== undefined) setLandingAuthModal(parsed.authModal);
+      if (parsed.shopPhone !== undefined) setRouteShopPhone(parsed.shopPhone);
+      if (parsed.shopScoperCode !== undefined) setRouteShopScoperCode(parsed.shopScoperCode);
+
+      if (parsed.orderId) {
+        const all = roomDb.getOrders();
+        const cleanTarget = parsed.orderId.toLowerCase().replace(/^#+/, '');
+        const found = all.find(
+          (o) =>
+            o.id.toLowerCase() === parsed.orderId?.toLowerCase() ||
+            o.id.toLowerCase().replace(/^#+/, '') === cleanTarget
+        );
+        if (found) {
+          setSelectedOrder(found);
+        }
+      }
+    };
+
+    // Clean up any initial hash in the address bar on mount
+    if (window.location.hash) {
+      const parsed = parseRouteFromUrl(isAuthenticated);
+      setUrlPath(parsed, true);
+    } else {
+      handleLocationCheck();
+    }
+
+    window.addEventListener('popstate', handleLocationCheck);
+    window.addEventListener('hashchange', handleLocationCheck);
+    return () => {
+      window.removeEventListener('popstate', handleLocationCheck);
+      window.removeEventListener('hashchange', handleLocationCheck);
+    };
+  }, [isAuthenticated]);
+
+  // Subscribe to Room DB & Firebase Auth Session state
   useEffect(() => {
     const load = () => {
       setOrders(roomDb.getOrders());
       setCustomers(roomDb.getCustomers());
       setTailors(roomDb.getTailors());
+      setProducts(roomDb.getProducts());
+      setCatalogueDocs(roomDb.getCatalogueDocs());
+      setAppointments(roomDb.getAppointments());
+      setInventory(roomDb.getInventory());
       setShopProfile(roomDb.getShopProfile());
       setAnalytics(roomDb.getRevenueAnalytics());
 
@@ -89,11 +238,35 @@ export default function App() {
     };
 
     load();
-    const unsubscribe = roomDb.subscribe(load);
-    return () => unsubscribe();
+    const unsubscribeRoomDb = roomDb.subscribe(load);
+
+    // Also listen for Firebase Auth state changes
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        const currentSession = roomDb.getAuthSession();
+        if (!currentSession?.isAuthenticated) {
+          roomDb.saveAuthSession({
+            isAuthenticated: true,
+            phoneNumber: user.phoneNumber || user.email || '',
+            loginTimestamp: new Date().toISOString(),
+            role: 'BoutiqueOwner',
+          });
+        }
+        setIsAuthenticated(true);
+        if (user.phoneNumber || user.email) {
+          setUserPhone(user.phoneNumber || user.email || '');
+        }
+      }
+    });
+
+    return () => {
+      unsubscribeRoomDb();
+      unsubscribeAuth();
+    };
   }, []);
 
   const overdueCount = orders.filter((o) => o.isOverdue && !o.isArchived).length;
+  const lowStockCount = inventory.filter((i) => i.quantity <= i.minStockAlert).length;
 
   const handleAuthSuccess = (
     phone: string,
@@ -118,21 +291,39 @@ export default function App() {
     });
 
     setIsAuthenticated(true);
-    setCurrentScreen('dashboard');
+    navigate('dashboard');
+  };
+
+  const handleCustomerAuthSuccess = (phone: string) => {
+    const clean = phone.replace(/\D/g, '').slice(-10);
+    setCustomerPhone(clean);
+    try {
+      localStorage.setItem('boutique_customer_phone', clean);
+    } catch {}
+    navigate({ screen: 'customer_portal' });
+  };
+
+  const handleCustomerLogout = () => {
+    setCustomerPhone('');
+    try {
+      localStorage.removeItem('boutique_customer_phone');
+    } catch {}
+    navigate('auth');
   };
 
   const handleLogout = () => {
-    // Clear persisted session on this device
+    // Clear persisted session and local data on this device
     roomDb.clearAuthSession();
+    roomDb.clearAllLocalData();
     setIsAuthenticated(false);
     setUserPhone('');
-    setCurrentScreen('auth');
+    navigate('auth');
   };
 
   const handleSaveNewOrder = (order: TailorOrder) => {
     roomDb.saveOrder(order);
     setSelectedOrder(order);
-    setCurrentScreen('dashboard');
+    navigate('dashboard');
   };
 
   const handleUpdateOrderStatus = (orderId: string, status: OrderStatus) => {
@@ -177,8 +368,7 @@ export default function App() {
   const handleNavigateToOrders = (
     tab: 'all' | 'cutting' | 'stitching' | 'overdue' | 'completed' | 'archived' = 'all'
   ) => {
-    setOrdersInitialTab(tab);
-    setCurrentScreen('orders');
+    navigate({ screen: 'orders', ordersTab: tab });
   };
 
   const handleConfirmAssignment = (
@@ -192,11 +382,66 @@ export default function App() {
     roomDb.updateOrderAssignment(orderId, assignedTailor, estimatedHours, offerMessage, dueDate, dueTime);
     const updated = roomDb.getOrders().find((o) => o.id === orderId);
     if (updated) setSelectedOrder(updated);
-    setCurrentScreen('order_details');
+    navigate({ screen: 'order_details', orderId });
   };
 
   const handleTriggerSync = async () => {
     await roomDb.triggerCloudSync();
+  };
+
+  const handleSaveProduct = async (product: MarketplaceProduct) => {
+    await roomDb.saveProduct(product);
+  };
+
+  const handleDeleteProduct = async (productId: string) => {
+    await roomDb.deleteProduct(productId);
+  };
+
+  const handleToggleProductStatus = async (
+    productId: string,
+    status: 'Available' | 'Made to Order' | 'Out of Stock' | 'Draft'
+  ) => {
+    await roomDb.toggleProductStatus(productId, status);
+  };
+
+  const handleBulkSaveProducts = async (newProducts: MarketplaceProduct[]) => {
+    await roomDb.bulkSaveProducts(newProducts);
+  };
+
+  const handleClearAllProducts = async () => {
+    await roomDb.clearAllProducts();
+  };
+
+  const handleSaveCatalogueDoc = async (doc: UploadedCatalogueDoc) => {
+    await roomDb.saveCatalogueDoc(doc);
+  };
+
+  const handleDeleteCatalogueDoc = async (docId: string) => {
+    await roomDb.deleteCatalogueDoc(docId);
+  };
+
+  const handleCreateOrderFromProduct = (product: MarketplaceProduct) => {
+    setPrefilledProductForNewOrder(product);
+    setActiveOrderPopup('stitch');
+  };
+
+  const handleStartStitch = () => {
+    setPrefilledProductForNewOrder(null);
+    setActiveOrderPopup('stitch');
+  };
+
+  const handleStartAlter = () => {
+    setPrefilledProductForNewOrder(null);
+    setActiveOrderPopup('alter');
+  };
+
+  const handleStartSale = () => {
+    setPrefilledProductForNewOrder(null);
+    setActiveOrderPopup('sale');
+  };
+
+  const handleStartAppointment = () => {
+    setActiveOrderPopup('appointment');
   };
 
   const renderActiveScreen = (isDesktopView = false) => {
@@ -268,7 +513,50 @@ export default function App() {
           title={title}
           content={content}
           isAuthenticated={isAuthenticated}
-          onBack={() => setCurrentScreen(isAuthenticated ? 'dashboard' : 'auth')}
+          onBack={() => navigate(isAuthenticated ? 'dashboard' : 'auth')}
+        />
+      );
+    }
+
+    if (currentScreen === 'customer_portal') {
+      return (
+        <CustomerPortal
+          customerPhone={customerPhone}
+          onExitToLogin={handleCustomerLogout}
+          onNavigateHome={() => navigate('auth')}
+        />
+      );
+    }
+
+    if (currentScreen === 'customer_index') {
+      if (customerPhone) {
+        return (
+          <CustomerPortal
+            customerPhone={customerPhone}
+            onExitToLogin={handleCustomerLogout}
+            onNavigateHome={() => navigate('auth')}
+          />
+        );
+      }
+      return (
+        <CustomerIndexPage
+          onCustomerAuthSuccess={handleCustomerAuthSuccess}
+          onNavigateOwnerLogin={() => navigate('auth')}
+          onNavigatePolicy={(p) => navigate(p)}
+          onNavigateCatalogue={() => navigate('public_catalogue')}
+        />
+      );
+    }
+
+    // Public Live Inventory Catalogue - accessible by anyone without login
+    if (currentScreen === 'public_catalogue' || (!isAuthenticated && currentScreen === 'inventory')) {
+      return (
+        <LivePublicCataloguePage
+          shopPhoneParam={routeShopPhone}
+          shopScoperCodeParam={routeShopScoperCode}
+          shopProfile={shopProfile}
+          inventory={inventory}
+          onNavigateHome={() => navigate(isAuthenticated ? 'dashboard' : 'auth')}
         />
       );
     }
@@ -277,8 +565,33 @@ export default function App() {
       return (
         <Screen1Auth
           onAuthSuccess={handleAuthSuccess}
+          onCustomerAuthSuccess={handleCustomerAuthSuccess}
           defaultMode="landing"
-          onNavigatePolicy={(p) => setCurrentScreen(p)}
+          initialAuthModal={landingAuthModal}
+          initialSection={landingSection}
+          onNavigatePolicy={(p) => navigate(p)}
+          onNavigateCatalogue={() => navigate('public_catalogue')}
+          onNavigateCustomerIndex={() => navigate('customer_index')}
+        />
+      );
+    }
+
+    // Portal Lockout: If the boutique is pending verification, lock all features until admin approves
+    const isPendingVerification =
+      shopProfile.isVerified === false ||
+      shopProfile.status === 'Pending Verification' ||
+      shopProfile.verificationStatus === 'pending';
+
+    if (isPendingVerification) {
+      return (
+        <BoutiqueVerificationLockScreen
+          shopProfile={shopProfile}
+          userPhone={userPhone}
+          onLogout={handleLogout}
+          onVerificationApproved={() => {
+            const fresh = roomDb.getShopProfile();
+            setShopProfile(fresh);
+          }}
         />
       );
     }
@@ -291,21 +604,38 @@ export default function App() {
             tailors={tailors}
             analytics={analytics}
             shopProfile={shopProfile}
+            appointments={appointments}
+            inventory={inventory}
+            onInventoryClick={() => navigate('inventory')}
             userPhone={userPhone}
             isDesktopView={isDesktopView}
-            onNewOrderClick={() => setCurrentScreen('new_order')}
+            onNewOrderClick={handleStartStitch}
+            onNewStitchClick={handleStartStitch}
+            onNewAlterClick={handleStartAlter}
+            onNewSaleClick={handleStartSale}
+            onNewAppointmentClick={handleStartAppointment}
             onSelectOrder={(ord) => {
               setSelectedOrder(ord);
-              setCurrentScreen('order_details');
+              setReceiptModalOrder(ord);
             }}
             onAssignTimelineClick={(ord) => {
               if (ord) setSelectedOrder(ord);
-              setCurrentScreen('assign_timeline');
+              navigate('assign_timeline');
             }}
-            onProfileClick={() => setCurrentScreen('profile')}
+            onProfileClick={() => navigate('profile')}
             onOverdueClick={() => handleNavigateToOrders('overdue')}
             onOrdersClick={(tab) => handleNavigateToOrders(tab || 'all')}
-            onReportsClick={() => setCurrentScreen('reports')}
+            onReportsClick={() => navigate('reports')}
+            onMarketplaceClick={() => navigate('marketplace')}
+            onCustomersClick={() => navigate('customers')}
+            onSaveAppointment={(appt) => roomDb.saveAppointment(appt)}
+            onDeleteAppointment={(id) => roomDb.deleteAppointment(id)}
+            onToggleAppointmentChecklist={(id, field, val) =>
+              roomDb.toggleAppointmentChecklist(id, field, val)
+            }
+            onRecordQuickPayment={(orderId, amount, mode, note) =>
+              roomDb.recordPayment(orderId, amount, mode, note)
+            }
             onQuickAssignTailor={(orderId, tailorName, estimatedHours, dueDate, dueTime) => {
               const ord = orders.find((o) => o.id === orderId);
               if (ord) {
@@ -331,26 +661,29 @@ export default function App() {
         return (
           <Screen3NewOrder
             isDesktopView={isDesktopView}
-            onBack={() => setCurrentScreen('dashboard')}
-            onSaveOrder={handleSaveNewOrder}
+            initialProduct={prefilledProductForNewOrder}
+            initialCategory={newOrderInitialCategory}
+            initialMode={newOrderInitialMode}
+            onBack={() => {
+              setPrefilledProductForNewOrder(null);
+              navigate('dashboard');
+            }}
+            onSaveOrder={(ord) => {
+              setPrefilledProductForNewOrder(null);
+              handleSaveNewOrder(ord);
+            }}
             existingCustomers={customers}
           />
         );
-      case 'order_details':
-        return selectedOrder ? (
-          <Screen4OrderDetails
-            order={selectedOrder}
-            shopProfile={shopProfile}
-            isDesktopView={isDesktopView}
-            onBack={() => setCurrentScreen('dashboard')}
-            onUpdateStatus={handleUpdateOrderStatus}
-            onDeliverOrder={handleDeliverOrder}
-            onAssignTimelineClick={(ord) => {
-              setSelectedOrder(ord);
-              setCurrentScreen('assign_timeline');
-            }}
+      case 'marketplace':
+        return (
+          <ScreenInventoryManager
+            roomDb={roomDb}
+            onNavigateBack={() => navigate('dashboard')}
           />
-        ) : (
+        );
+      case 'order_details':
+        return (
           <Screen2Dashboard
             orders={orders}
             tailors={tailors}
@@ -358,19 +691,22 @@ export default function App() {
             shopProfile={shopProfile}
             userPhone={userPhone}
             isDesktopView={isDesktopView}
-            onNewOrderClick={() => setCurrentScreen('new_order')}
+            onNewOrderClick={handleStartStitch}
+            onNewStitchClick={handleStartStitch}
+            onNewAlterClick={handleStartAlter}
+            onNewSaleClick={handleStartSale}
             onSelectOrder={(ord) => {
               setSelectedOrder(ord);
-              setCurrentScreen('order_details');
+              setReceiptModalOrder(ord);
             }}
             onAssignTimelineClick={(ord) => {
               if (ord) setSelectedOrder(ord);
-              setCurrentScreen('assign_timeline');
+              navigate('assign_timeline');
             }}
-            onProfileClick={() => setCurrentScreen('profile')}
+            onProfileClick={() => navigate('profile')}
             onOverdueClick={() => handleNavigateToOrders('overdue')}
             onOrdersClick={(tab) => handleNavigateToOrders(tab || 'all')}
-            onReportsClick={() => setCurrentScreen('reports')}
+            onReportsClick={() => navigate('reports')}
             onQuickAssignTailor={(orderId, tailorName, estimatedHours) => {
               const ord = orders.find((o) => o.id === orderId);
               if (ord) {
@@ -395,22 +731,28 @@ export default function App() {
             orders={orders}
             shopProfile={shopProfile}
             tailors={tailors}
+            existingCustomers={customers}
             initialTab={currentScreen === 'overdue' ? 'overdue' : ordersInitialTab}
             isDesktopView={isDesktopView}
-            onBack={() => setCurrentScreen('dashboard')}
+            onBack={() => navigate('dashboard')}
             onSelectOrder={(ord) => {
               setSelectedOrder(ord);
-              setCurrentScreen('order_details');
+              setReceiptModalOrder(ord);
             }}
             onArchiveOrder={handleArchiveOrder}
             onUnarchiveOrder={handleUnarchiveOrder}
             onUpdateStatus={handleUpdateOrderStatus}
             onDeliverOrder={handleDeliverOrder}
+            onSaveOrder={handleSaveNewOrder}
             onAssignTimelineClick={(ord) => {
               if (ord) setSelectedOrder(ord);
-              setCurrentScreen('assign_timeline');
+              navigate('assign_timeline');
             }}
-            onNewOrderClick={() => setCurrentScreen('new_order')}
+            onNewOrderClick={handleStartStitch}
+            onNewStitchClick={handleStartStitch}
+            onNewAlterClick={handleStartAlter}
+            onNewSaleClick={handleStartSale}
+            onNewAppointmentClick={handleStartAppointment}
             onExtendDueDate={(orderId, newDate) => {
               const ord = orders.find((o) => o.id === orderId);
               if (ord) {
@@ -428,12 +770,12 @@ export default function App() {
             orders={orders}
             tailors={tailors}
             isDesktopView={isDesktopView}
-            onBack={() => setCurrentScreen('dashboard')}
+            onBack={() => navigate('dashboard')}
             onConfirmAssignment={handleConfirmAssignment}
             onUpdateOrderStatus={handleUpdateOrderStatus}
             onSelectOrder={(ord) => {
               setSelectedOrder(ord);
-              setCurrentScreen('order_details');
+              setReceiptModalOrder(ord);
             }}
           />
         );
@@ -443,14 +785,32 @@ export default function App() {
             customers={customers}
             orders={orders}
             isDesktopView={isDesktopView}
-            onBack={() => setCurrentScreen('dashboard')}
+            onBack={() => navigate('dashboard')}
             onSelectOrder={(ord) => {
               setSelectedOrder(ord);
-              setCurrentScreen('order_details');
+              setReceiptModalOrder(ord);
             }}
             onNewOrderForCustomer={(cust) => {
-              setCurrentScreen('new_order');
+              setActiveOrderPopup('stitch');
             }}
+          />
+        );
+      case 'customer_portal':
+        return (
+          <CustomerPortal
+            customerPhone={customerPhone || userPhone}
+            onExitToLogin={handleCustomerLogout}
+            onNavigateHome={() => navigate('dashboard')}
+          />
+        );
+      case 'public_catalogue':
+        return (
+          <LivePublicCataloguePage
+            shopPhoneParam={routeShopPhone}
+            shopScoperCodeParam={routeShopScoperCode}
+            shopProfile={shopProfile}
+            inventory={inventory}
+            onNavigateHome={() => navigate(isAuthenticated ? 'dashboard' : 'auth')}
           />
         );
       case 'profile':
@@ -458,13 +818,13 @@ export default function App() {
           <Screen7ProfileSettings
             profile={shopProfile}
             tailors={tailors}
+            inventory={inventory}
             isDesktopView={isDesktopView}
-            onBack={() => setCurrentScreen('dashboard')}
+            onBack={() => navigate('dashboard')}
             onUpdateProfile={(prof) => roomDb.updateShopProfile(prof)}
             onAddTailor={(name, phone, role) => roomDb.addTailor(name, phone, role)}
             onDeleteTailor={(id) => roomDb.deleteTailor(id)}
             onTriggerSync={handleTriggerSync}
-            onOpenSourceCodeModal={() => setShowCodeModal(true)}
             onLogout={handleLogout}
           />
         );
@@ -473,7 +833,31 @@ export default function App() {
           <Screen8RevenueReports
             analytics={analytics}
             isDesktopView={isDesktopView}
-            onBack={() => setCurrentScreen('dashboard')}
+            onBack={() => navigate('dashboard')}
+          />
+        );
+      case 'appointments':
+        return (
+          <ScreenAppointmentsManager
+            appointments={appointments}
+            orders={orders}
+            onSaveAppointment={(appt) => roomDb.saveAppointment(appt)}
+            onDeleteAppointment={(id) => roomDb.deleteAppointment(id)}
+            onToggleAppointmentChecklist={(id, field, val) =>
+              roomDb.toggleAppointmentChecklist(id, field, val)
+            }
+            onSelectOrder={(ord) => {
+              setSelectedOrder(ord);
+              setReceiptModalOrder(ord);
+            }}
+            onNavigateToNewOrder={() => navigate('new_order')}
+          />
+        );
+      case 'inventory':
+        return (
+          <ScreenInventoryManager
+            roomDb={roomDb}
+            onNavigateBack={() => navigate('dashboard')}
           />
         );
       default:
@@ -482,25 +866,47 @@ export default function App() {
             orders={orders}
             tailors={tailors}
             analytics={analytics}
+            shopProfile={shopProfile}
+            appointments={appointments}
             userPhone={userPhone}
             isDesktopView={isDesktopView}
-            onNewOrderClick={() => setCurrentScreen('new_order')}
+            onNewOrderClick={() => navigate('new_order')}
+            onNewStitchClick={handleStartStitch}
+            onNewAlterClick={handleStartAlter}
+            onNewSaleClick={handleStartSale}
+            onNewAppointmentClick={() => navigate('appointments')}
             onSelectOrder={(ord) => {
               setSelectedOrder(ord);
-              setCurrentScreen('order_details');
+              setReceiptModalOrder(ord);
             }}
             onAssignTimelineClick={(ord) => {
               if (ord) setSelectedOrder(ord);
-              setCurrentScreen('assign_timeline');
+              navigate('assign_timeline');
             }}
-            onProfileClick={() => setCurrentScreen('profile')}
+            onProfileClick={() => navigate('profile')}
             onOverdueClick={() => handleNavigateToOrders('overdue')}
             onOrdersClick={(tab) => handleNavigateToOrders(tab || 'all')}
-            onReportsClick={() => setCurrentScreen('reports')}
+            onReportsClick={() => navigate('reports')}
+            onMarketplaceClick={() => navigate('marketplace')}
+            onCustomersClick={() => navigate('customers')}
+            onSaveAppointment={(appt) => roomDb.saveAppointment(appt)}
+            onDeleteAppointment={(id) => roomDb.deleteAppointment(id)}
+            onToggleAppointmentChecklist={(id, field, val) =>
+              roomDb.toggleAppointmentChecklist(id, field, val)
+            }
+            onRecordQuickPayment={(orderId, amount, mode, note) =>
+              roomDb.recordPayment(orderId, amount, mode, note)
+            }
+            onDeliverOrder={handleDeliverOrder}
             onQuickAssignTailor={(orderId, tailorName, estimatedHours, dueDate, dueTime) => {
               const ord = orders.find((o) => o.id === orderId);
               if (ord) {
-                const finalDueDate = dueDate || ord.dueDate || new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                const finalDueDate =
+                  dueDate ||
+                  ord.dueDate ||
+                  new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
+                    .toISOString()
+                    .split('T')[0];
                 const finalDueTime = dueTime || ord.dueTime || '18:00';
                 const finalHours = estimatedHours || ord.estimatedHours || 4;
                 const finalMsg = `Hello ${ord.customerName}, your ${ord.garmentType} order (${ord.id}) is assigned to ${tailorName}. Promised delivery: ${finalDueDate} at ${finalDueTime}.`;
@@ -520,6 +926,24 @@ export default function App() {
     }
   };
 
+  const todayStr = useMemo(() => getLocalDateStr(), []);
+  const todayAppointmentCount = useMemo(() => {
+    return appointments.filter(
+      (a) => normalizeDateStr(a.date) === todayStr && a.status !== 'Completed' && a.status !== 'Cancelled'
+    ).length;
+  }, [appointments, todayStr]);
+
+  // Render Admin Portal if on /admin route or admin screen
+  if (isAdminRoute || currentScreen === 'admin') {
+    return (
+      <AdminPortal
+        onExitToShop={() => {
+          navigate(isAuthenticated ? 'dashboard' : 'auth');
+        }}
+      />
+    );
+  }
+
   return (
     <>
       <DesktopLayout
@@ -528,25 +952,67 @@ export default function App() {
         shopProfile={shopProfile}
         currentScreen={currentScreen}
         overdueCount={overdueCount}
+        todayAppointmentCount={todayAppointmentCount}
+        lowStockCount={lowStockCount}
         onNavigate={(sc) => {
-          if (sc === 'orders') {
-            setOrdersInitialTab('all');
-          } else if (sc === 'overdue') {
-            setOrdersInitialTab('overdue');
+          if (sc === 'admin') {
+            navigate('admin');
+            return;
           }
-          setCurrentScreen(sc);
+          if (sc === 'overdue') {
+            navigate({ screen: 'orders', ordersTab: 'overdue' });
+            return;
+          }
+          navigate(sc);
         }}
         onAuthSuccess={handleAuthSuccess}
         onLogout={handleLogout}
         onTriggerSync={handleTriggerSync}
-        onOpenCodeModal={() => setShowCodeModal(true)}
+        onNewStitchClick={handleStartStitch}
+        onNewAlterClick={handleStartAlter}
+        onNewSaleClick={handleStartSale}
+        onNewAppointmentClick={handleStartAppointment}
       >
         {renderActiveScreen(true)}
       </DesktopLayout>
 
-      {/* Android Jetpack Compose Source Code Inspector Modal */}
-      {showCodeModal && (
-        <AndroidSourceCodeModal onClose={() => setShowCodeModal(false)} />
+      {/* Global Modern Order Popups (Stitch, Alter, Sale, Appointment) */}
+      <ModernOrderPopups
+        isOpen={activeOrderPopup !== null}
+        activeType={activeOrderPopup}
+        onClose={() => {
+          setActiveOrderPopup(null);
+          setPrefilledProductForNewOrder(null);
+        }}
+        onSaveOrder={(ord) => {
+          handleSaveNewOrder(ord);
+          setActiveOrderPopup(null);
+          setPrefilledProductForNewOrder(null);
+        }}
+        shopProfile={shopProfile}
+        existingCustomers={customers}
+        tailors={tailors}
+        isDesktopView={true}
+        initialProduct={prefilledProductForNewOrder}
+      />
+
+      {/* Global Order Receipt Modal Popup */}
+      {receiptModalOrder && (
+        <OrderReceiptModal
+          order={receiptModalOrder}
+          shopProfile={shopProfile}
+          onClose={() => setReceiptModalOrder(null)}
+          onUpdateStatus={handleUpdateOrderStatus}
+          onDeliverOrder={handleDeliverOrder}
+          onRecordPayment={(orderId, amount, mode, note) => {
+            roomDb.recordPayment(orderId, amount, mode, note);
+          }}
+          onAssignTimelineClick={(ord) => {
+            setReceiptModalOrder(null);
+            setSelectedOrder(ord);
+            navigate('assign_timeline');
+          }}
+        />
       )}
     </>
   );
@@ -569,7 +1035,7 @@ function PolicyPage({
       <div className="flex items-center justify-between pb-4 mb-6 border-b border-slate-200">
         <button
           onClick={onBack}
-          className="px-4 py-2 rounded-xl bg-[#0B4636] hover:bg-[#073024] text-amber-300 font-extrabold text-xs flex items-center gap-2 cursor-pointer shadow-sm transition-all"
+          className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center gap-2 cursor-pointer shadow-sm transition-all"
         >
           <span>{isAuthenticated ? '← Back to Dashboard' : '← Back to Home / Login'}</span>
         </button>

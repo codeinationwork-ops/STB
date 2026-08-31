@@ -123,7 +123,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
             Shop<span className="text-amber-500">Scopers</span>
           </span>
           <span className={`text-[10px] font-bold tracking-wider uppercase mt-0.5 leading-none ${subtitleClassName}`}>
-            Tailor Master CRM
+            Boutique CRM
           </span>
         </div>
       )}

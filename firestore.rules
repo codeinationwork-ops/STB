@@ -1,8 +1,277 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
+
+    // Global ID & Type Guards
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Health & System Connectivity Check
+    match /test/{docId} {
       allow read, write: if true;
+    }
+
+    match /tailor_system/{docId} {
+      allow read, write: if true;
+    }
+
+    // Boutiques Master Collection (Single Source of Truth for Boutique Profiles)
+    match /boutiques/{boutiqueId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(boutiqueId) && incoming() is map;
+      allow delete: if isValidId(boutiqueId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // Master Orders Collection
+    match /orders/{orderId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(orderId) && incoming() is map;
+      allow delete: if isValidId(orderId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // Category-specific Direct Partitions (stitch / alter / sale)
+    match /stitch/{orderId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(orderId) && incoming() is map;
+      allow delete: if isValidId(orderId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    match /alter/{orderId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(orderId) && incoming() is map;
+      allow delete: if isValidId(orderId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    match /sale/{orderId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(orderId) && incoming() is map;
+      allow delete: if isValidId(orderId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // Legacy / Alternate Order Collections
+    match /tailor_orders/{orderId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(orderId) && incoming() is map;
+      allow delete: if isValidId(orderId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    match /tailor_orders_stitch/{orderId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(orderId) && incoming() is map;
+      allow delete: if isValidId(orderId);
+    }
+
+    match /tailor_orders_alteration/{orderId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(orderId) && incoming() is map;
+      allow delete: if isValidId(orderId);
+    }
+
+    match /tailor_orders_sale/{orderId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(orderId) && incoming() is map;
+      allow delete: if isValidId(orderId);
+    }
+
+    match /order/{orderId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(orderId) && incoming() is map;
+      allow delete: if isValidId(orderId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // Customers Directory
+    match /tailor_customers/{customerId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(customerId) && incoming() is map;
+      allow delete: if isValidId(customerId);
+    }
+
+    match /customers/{customerId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(customerId) && incoming() is map;
+      allow delete: if isValidId(customerId);
+    }
+
+    match /customer/{customerId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(customerId) && incoming() is map;
+      allow delete: if isValidId(customerId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    match /Customer/{customerId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(customerId) && incoming() is map;
+      allow delete: if isValidId(customerId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    match /boutique_Customer/{boutiqueId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(boutiqueId) && incoming() is map;
+      allow delete: if isValidId(boutiqueId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    match /boutique_customers/{boutiqueId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(boutiqueId) && incoming() is map;
+      allow delete: if isValidId(boutiqueId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // Staff Roster
+    match /tailor_staff/{staffId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(staffId) && incoming() is map;
+      allow delete: if isValidId(staffId);
+    }
+
+    // Inventory
+    match /inventory/{itemId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(itemId) && incoming() is map;
+      allow delete: if isValidId(itemId);
+    }
+
+    match /boutique_inventory/{itemId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(itemId) && incoming() is map;
+      allow delete: if isValidId(itemId);
+    }
+
+    // Marketplace Products Catalogue
+    match /marketplace_products/{productId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(productId) && incoming() is map;
+      allow delete: if isValidId(productId);
+    }
+
+    match /tailor_marketplace_products/{productId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(productId) && incoming() is map;
+      allow delete: if isValidId(productId);
+    }
+
+    // Catalogue Documents
+    match /catalogue_documents/{docId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(docId) && incoming() is map;
+      allow delete: if isValidId(docId);
+    }
+
+    match /tailor_catalogue_documents/{docId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(docId) && incoming() is map;
+      allow delete: if isValidId(docId);
+    }
+
+    match /catalogue_docs/{docId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(docId) && incoming() is map;
+      allow delete: if isValidId(docId);
+    }
+
+    // Appointments Collection
+    match /appointments/{appointmentId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(appointmentId) && incoming() is map;
+      allow delete: if isValidId(appointmentId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    match /Boutique_Appointment/{appointmentId} {
+      allow read, write, delete: if true;
+    }
+    match /appointment/{appointmentId} {
+      allow read, write, delete: if true;
+    }
+    match /boutique_appointment/{appointmentId} {
+      allow read, write, delete: if true;
+    }
+    match /boutique_appointments/{appointmentId} {
+      allow read, write, delete: if true;
+    }
+    match /tailor_appointments/{appointmentId} {
+      allow read, write, delete: if true;
+    }
+
+    // Subscriptions Collection (Master & Alias)
+    match /Subscription/{subscriptionId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(subscriptionId) && incoming() is map;
+      allow delete: if isValidId(subscriptionId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    match /subscriptions/{subscriptionId} {
+      allow get, list: if true;
+      allow create, update: if isValidId(subscriptionId) && incoming() is map;
+      allow delete: if isValidId(subscriptionId);
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

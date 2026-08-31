@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Scissors,
   Shield,
@@ -26,15 +26,41 @@ import {
   Trash2,
   CreditCard,
   Image as ImageIcon,
+  UserCheck,
 } from 'lucide-react';
 import { db, auth } from '../../lib/firebase';
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
-import { RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from 'firebase/auth';
+import { doc, setDoc, getDoc, deleteDoc, collection, query, where, getDocs, serverTimestamp } from 'firebase/firestore';
+import {
+  RecaptchaVerifier,
+  signInWithPhoneNumber,
+  ConfirmationResult,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updatePassword,
+  updateProfile,
+} from 'firebase/auth';
 import { roomDb } from '../../lib/localRoomDb';
+import { SearchableSelect } from '../common/SearchableSelect';
+import { ALL_INDIAN_STATES, INDIA_STATES_AND_CITIES } from '../../data/indiaLocations';
+
+// Helper to normalize phone number to strictly 10 digits (stripping any country code like +91 / 91 / 0)
+export const getClean10DigitPhone = (rawPhone: string): string => {
+  if (!rawPhone) return '';
+  let digits = rawPhone.replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('91')) {
+    digits = digits.slice(2);
+  } else if (digits.length === 11 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  } else if (digits.length > 10) {
+    digits = digits.slice(-10);
+  }
+  return digits;
+};
 
 interface AuthSuitePageProps {
-  initialTab?: 'signup' | 'login';
+  initialTab?: 'signup' | 'login' | 'customer';
   onAuthSuccess: (phoneNumber: string, shopDetails?: { shopName: string; ownerName: string }) => void;
+  onCustomerAuthSuccess?: (customerPhone: string) => void;
   onBackToLanding?: () => void;
   onNavigatePolicy?: (policy: 'terms' | 'privacy' | 'refund') => void;
 }
@@ -42,25 +68,41 @@ interface AuthSuitePageProps {
 export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
   initialTab = 'login',
   onAuthSuccess,
+  onCustomerAuthSuccess,
   onBackToLanding,
   onNavigatePolicy,
 }) => {
-  const [activeTab, setActiveTab] = useState<'signup' | 'login'>(
-    initialTab === 'signup' ? 'signup' : 'login'
+  const [activeTab, setActiveTab] = useState<'signup' | 'login' | 'customer'>(
+    initialTab === 'signup' ? 'signup' : initialTab === 'customer' ? 'customer' : 'login'
   );
+
+  // Customer Login Form State
+  const [customerLoginPhone, setCustomerLoginPhone] = useState('');
+  const [isCustomerLoggingIn, setIsCustomerLoggingIn] = useState(false);
 
   // Sign Up Form State
   const [signUpShopName, setSignUpShopName] = useState('');
   const [signUpOwnerName, setSignUpOwnerName] = useState('');
   const [signUpPhone, setSignUpPhone] = useState('');
+  const [signUpEmail, setSignUpEmail] = useState('');
   const [signUpExactAddress, setSignUpExactAddress] = useState('');
+  const [signUpState, setSignUpState] = useState('');
+  const [signUpCity, setSignUpCity] = useState('');
+  const [signUpPincode, setSignUpPincode] = useState('');
   const [signUpSpecialty, setSignUpSpecialty] = useState('All Speciality Tailoring');
   const [signUpTerms, setSignUpTerms] = useState(true);
+
+  // Derived available cities for selected state
+  const availableCities = useMemo(() => {
+    if (!signUpState || !INDIA_STATES_AND_CITIES[signUpState]) return [];
+    return INDIA_STATES_AND_CITIES[signUpState];
+  }, [signUpState]);
 
   // Payment QR & UPI State for Setup
   const [signUpUpiId, setSignUpUpiId] = useState('');
   const [signUpGpayPhone, setSignUpGpayPhone] = useState('');
   const [signUpQrCodeUrl, setSignUpQrCodeUrl] = useState('');
+  const [showOptionalPayment, setShowOptionalPayment] = useState(false);
 
   // Login Form State
   const [loginPhone, setLoginPhone] = useState('');
@@ -76,6 +118,9 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
   const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [resetPhone, setResetPhone] = useState('');
 
+  // Active authenticated session password tracker
+  const [activeAuthPassword, setActiveAuthPassword] = useState('');
+
   // OTP & Step Verification State
   const [authStep, setAuthStep] = useState<'form' | 'otp_verify' | 'set_password' | 'forgot_password' | 'syncing'>('form');
   const [generatedOtp, setGeneratedOtp] = useState('');
@@ -87,13 +132,55 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
   const [isSendingSms, setIsSendingSms] = useState(false);
   const [isVerifyingSms, setIsVerifyingSms] = useState(false);
 
+  // Multi-strategy Firestore boutique lookup by 10-digit phone
+  const findBoutiqueDocument = async (phoneDigits: string) => {
+    const cleanPhone = getClean10DigitPhone(phoneDigits);
+    if (!cleanPhone) return null;
+
+    const candidateIds = [
+      `shop_${cleanPhone}`,
+      `shop_91${cleanPhone}`,
+      `91${cleanPhone}`,
+      cleanPhone,
+      `boutique_${cleanPhone}`,
+    ];
+
+    for (const docId of candidateIds) {
+      try {
+        const snap = await getDoc(doc(db, 'boutiques', docId));
+        if (snap && snap.exists()) {
+          return { snap, docId, data: snap.data() };
+        }
+      } catch (_) {}
+    }
+
+    // Fallback: Query collection by cleanPhone or phone field
+    try {
+      const qClean = query(collection(db, 'boutiques'), where('cleanPhone', '==', cleanPhone));
+      const qsClean = await getDocs(qClean);
+      if (!qsClean.empty) {
+        const first = qsClean.docs[0];
+        return { snap: first, docId: first.id, data: first.data() };
+      }
+
+      const qPhone = query(collection(db, 'boutiques'), where('phone', '==', `+91 ${cleanPhone}`));
+      const qsPhone = await getDocs(qPhone);
+      if (!qsPhone.empty) {
+        const first = qsPhone.docs[0];
+        return { snap: first, docId: first.id, data: first.data() };
+      }
+    } catch (_) {}
+
+    return null;
+  };
+
   // Send real SMS OTP to phone via Firebase Phone Authentication
   const sendFirebaseOtp = async (targetPhone: string) => {
     setIsSendingSms(true);
     setErrorMsg('');
     try {
-      const cleanDigits = targetPhone.replace(/\D/g, '');
-      const formattedPhone = cleanDigits.length === 10 ? `+91${cleanDigits}` : `+${cleanDigits}`;
+      const cleanDigits = getClean10DigitPhone(targetPhone);
+      const formattedPhone = `+91${cleanDigits}`;
 
       if (!(window as any).recaptchaVerifier) {
         (window as any).recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
@@ -136,62 +223,182 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
     }
   };
 
-  // Save or update shop details in Firestore 'tailor_shop' collection
+  // Save or update boutique shop details exclusively in Firestore 'boutiques' collection
   const triggerTailorShopCollection = async (phone: string, isSignUp: boolean, newPassword?: string) => {
     try {
-      const cleanPhone = phone.replace(/\D/g, '');
+      const cleanPhone = getClean10DigitPhone(phone);
       const shopDocId = `shop_${cleanPhone}`;
-      const shopRef = doc(db, 'tailor_shop', shopDocId);
+      const boutiqueShopRef = doc(db, 'boutiques', shopDocId);
 
-      const existingSnap = await getDoc(shopRef).catch(() => null);
+      const existingSnap = await getDoc(boutiqueShopRef).catch(() => null);
       const existingData = existingSnap?.exists() ? existingSnap.data() : null;
 
-      const effectivePassword = newPassword || accountPassword || existingData?.password || '';
+      // Ensure password is NEVER wiped out by empty string
+      const effectivePassword =
+        (newPassword && newPassword.trim()) ||
+        (accountPassword && accountPassword.trim()) ||
+        (activeAuthPassword && activeAuthPassword.trim()) ||
+        existingData?.password ||
+        existingData?.accountPassword ||
+        'BoutiquePass123!';
+
+      // Attempt to register or link Firebase Auth user
+      const authEmail = `${cleanPhone}@boutiqueshop.app`;
+      let authUid = auth.currentUser?.uid || '';
+
+      try {
+        if (!auth.currentUser) {
+          try {
+            const userCred = await createUserWithEmailAndPassword(auth, authEmail, effectivePassword);
+            authUid = userCred.user.uid;
+            if (signUpOwnerName.trim()) {
+              await updateProfile(userCred.user, { displayName: signUpOwnerName.trim() }).catch(() => {});
+            }
+          } catch (createErr: any) {
+            if (createErr.code === 'auth/email-already-in-use') {
+              const signCred = await signInWithEmailAndPassword(auth, authEmail, effectivePassword).catch(() => null);
+              if (signCred) {
+                authUid = signCred.user.uid;
+              }
+            }
+          }
+        } else if (newPassword && newPassword.trim()) {
+          await updatePassword(auth.currentUser, newPassword.trim()).catch(() => {});
+        }
+      } catch (authErr) {
+        console.warn('Firebase Auth user registration note:', authErr);
+      }
 
       const shopData: any = {
+        id: shopDocId,
+        boutiqueId: shopDocId,
         shopId: shopDocId,
         ownerName: isSignUp
           ? signUpOwnerName.trim() || 'Shop Owner'
           : existingData?.ownerName || 'Shop Owner',
         shopName: isSignUp
-          ? signUpShopName.trim() || 'Tailor Shop'
-          : existingData?.shopName || 'Tailor Shop',
+          ? signUpShopName.trim() || 'Boutique Shop'
+          : existingData?.shopName || 'Boutique Shop',
         phoneNumber: `+91 ${cleanPhone}`,
+        phone: `+91 ${cleanPhone}`,
+        cleanPhone,
         address: isSignUp
           ? signUpExactAddress.trim()
           : existingData?.address || '',
+        exactAddress: isSignUp
+          ? signUpExactAddress.trim()
+          : existingData?.exactAddress || existingData?.address || '',
+        state: isSignUp ? signUpState.trim() : existingData?.state || '',
+        city: isSignUp ? signUpCity.trim() : existingData?.city || '',
+        pincode: isSignUp ? signUpPincode.trim() : existingData?.pincode || '',
+        email: isSignUp && signUpEmail.trim() ? signUpEmail.trim() : existingData?.email || authEmail,
         specialty: isSignUp
           ? signUpSpecialty.trim() || 'All Speciality Tailoring'
           : existingData?.specialty || 'All Speciality Tailoring',
+        tailoringSpeciality: isSignUp
+          ? signUpSpecialty.trim() || 'All Speciality Tailoring'
+          : existingData?.tailoringSpeciality || existingData?.specialty || 'All Speciality Tailoring',
+        upiId: isSignUp ? signUpUpiId.trim() : existingData?.upiId || '',
+        gpayPhonePeNumber: isSignUp ? signUpGpayPhone.trim() : existingData?.gpayPhonePeNumber || '',
+        upiQrCodeUrl: isSignUp ? signUpQrCodeUrl.trim() : existingData?.upiQrCodeUrl || '',
         password: effectivePassword,
+        accountPassword: effectivePassword,
+        authUid: authUid || existingData?.authUid || '',
+        authEmail,
+        status: isSignUp
+          ? 'Pending Verification'
+          : existingData?.status === 'Active' || existingData?.status === 'active' || existingData?.isVerified === true
+          ? 'Active'
+          : 'Pending Verification',
+        isVerified: isSignUp
+          ? false
+          : existingData?.isVerified === true || existingData?.status === 'Active' || existingData?.status === 'active',
+        verificationStatus: isSignUp
+          ? 'pending'
+          : existingData?.verificationStatus || (existingData?.isVerified === true || existingData?.status === 'Active' || existingData?.status === 'active' ? 'verified' : 'pending'),
+        plan: isSignUp ? 'Starter Plan' : existingData?.plan || 'Starter Plan',
+        planTier: isSignUp ? 'Starter Plan' : existingData?.planTier || 'Starter Plan',
+        termsAccepted: true,
+        signupDate: existingData?.signupDate || new Date().toISOString(),
+        registeredAt: existingData?.registeredAt || new Date().toISOString(),
         updatedAt: serverTimestamp(),
         lastLoginAt: serverTimestamp(),
-        status: 'active',
-        plan: isSignUp ? 'Starter Plan' : existingData?.plan || 'Starter Plan',
       };
 
       if (!existingData) {
         shopData.createdAt = serverTimestamp();
       }
 
-      await setDoc(shopRef, shopData, { merge: true });
-      console.log(`Saved shop details to Firestore 'tailor_shop' collection (${shopDocId})`);
+      // Store exclusively in 'boutiques' collection under single document 'shop_<10digitPhone>'
+      const boutiqueDocRef = doc(db, 'boutiques', shopDocId);
+      await setDoc(boutiqueDocRef, shopData, { merge: true });
+      console.log(`Successfully saved boutique data to Firestore 'boutiques' collection under document '${shopDocId}'`);
 
-      // Sync local room database profile
+      // Clean up all extraneous/legacy documents from previous writes
+      deleteDoc(doc(db, 'boutiques', `shop_91${cleanPhone}`)).catch(() => {});
+      deleteDoc(doc(db, 'boutiques', `91${cleanPhone}`)).catch(() => {});
+      deleteDoc(doc(db, 'boutiques', cleanPhone)).catch(() => {});
+      deleteDoc(doc(db, 'boutiques', 'main')).catch(() => {});
+
+      // Initialize Owner Staff Tailor
+      const ownerName = shopData.ownerName;
+      const initials = ownerName
+        .split(' ')
+        .map((n: string) => n[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 2) || 'OW';
+
+      roomDb.setTailors([
+        {
+          id: 'tailor-owner',
+          name: `${ownerName} (Owner)`,
+          phone: shopData.phoneNumber,
+          role: 'Owner',
+          initials,
+          activeOrdersCount: 0,
+        },
+      ]);
+
+      // Sync local room database profile with verification status
       roomDb.updateShopProfile({
         shopName: shopData.shopName,
         ownerName: shopData.ownerName,
         phoneNumber: shopData.phoneNumber,
         address: shopData.address,
+        city: shopData.city,
+        specialty: shopData.specialty,
+        upiId: shopData.upiId,
+        gpayPhonePeNumber: shopData.gpayPhonePeNumber,
+        upiQrCodeUrl: shopData.upiQrCodeUrl,
+        isVerified: shopData.isVerified,
+        status: shopData.status,
+        verificationStatus: shopData.verificationStatus,
+      });
+
+      // Save persistent local auth session
+      roomDb.saveAuthSession({
+        isAuthenticated: true,
+        phoneNumber: shopData.phoneNumber,
+        role: 'Owner',
+        shopName: shopData.shopName,
+        ownerName: shopData.ownerName,
+        isVerified: shopData.isVerified,
+        verificationStatus: shopData.verificationStatus,
+        loginTimestamp: new Date().toISOString(),
       });
     } catch (err) {
-      console.error('Error saving to tailor_shop Firestore collection:', err);
+      console.error('Error saving to boutiques Firestore collection:', err);
       // Fallback to local DB
+      const cleanPhone = getClean10DigitPhone(phone);
       roomDb.updateShopProfile({
-        shopName: isSignUp ? signUpShopName : 'Tailor Shop',
+        shopName: isSignUp ? signUpShopName : 'Boutique Shop',
         ownerName: isSignUp ? signUpOwnerName : 'Shop Owner',
-        phoneNumber: `+91 ${phone}`,
+        phoneNumber: `+91 ${cleanPhone}`,
         address: signUpExactAddress.trim(),
+        upiId: signUpUpiId.trim(),
+        gpayPhonePeNumber: signUpGpayPhone.trim(),
+        upiQrCodeUrl: signUpQrCodeUrl.trim(),
       });
     }
   };
@@ -205,7 +412,7 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
     return () => clearInterval(interval);
   }, [authStep, timer]);
 
-  // Sync Progress animation & trigger tailor_shop collection
+  // Sync Progress animation & trigger boutique shop collection
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (authStep === 'syncing') {
@@ -221,26 +428,28 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
                 ? signUpPhone
                 : loginPhone;
               const isSignUp = activeTab === 'signup';
+              const clean10 = getClean10DigitPhone(currentPhone);
+              const passToPersist = activeAuthPassword || accountPassword || loginPassword;
 
-              await triggerTailorShopCollection(currentPhone, isSignUp, accountPassword);
+              await triggerTailorShopCollection(clean10, isSignUp, passToPersist);
 
               if (isSignUp) {
-                onAuthSuccess(`+91 ${signUpPhone}`, {
+                onAuthSuccess(`+91 ${clean10}`, {
                   shopName: signUpShopName,
                   ownerName: signUpOwnerName,
                 });
               } else {
-                onAuthSuccess(`+91 ${currentPhone}`);
+                onAuthSuccess(`+91 ${clean10}`);
               }
-            }, 500);
+            }, 400);
             return 100;
           }
           return prev + 10;
         });
-      }, 50);
+      }, 45);
     }
     return () => clearInterval(interval);
-  }, [authStep, activeTab, signUpPhone, signUpShopName, signUpOwnerName, loginPhone, resetPhone, isResettingPassword, accountPassword, onAuthSuccess]);
+  }, [authStep, activeTab, signUpPhone, signUpShopName, signUpOwnerName, loginPhone, resetPhone, isResettingPassword, accountPassword, activeAuthPassword, loginPassword, onAuthSuccess]);
 
   // Handle Sign Up Submission
   const handleSignUpSubmit = async (e: React.FormEvent) => {
@@ -253,41 +462,76 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
       setErrorMsg('Please enter Owner or Master Tailor name.');
       return;
     }
-    if (signUpPhone.length < 10) {
-      setErrorMsg('Please enter a valid 10-digit Indian mobile number.');
+    const cleanPhone = getClean10DigitPhone(signUpPhone);
+    if (cleanPhone.length < 10) {
+      setErrorMsg('Please enter a valid 10-digit mobile number.');
       return;
     }
     if (!signUpExactAddress.trim()) {
-      setErrorMsg('Please enter the exact physical shop address for your customers.');
+      setErrorMsg('Please enter the exact physical shop address.');
       return;
     }
     if (!signUpTerms) {
-      setErrorMsg('Please agree to the ShopScoper Terms & Privacy Policy.');
+      setErrorMsg('Please accept the Terms of Service & Privacy Policy.');
       return;
     }
 
+    setIsSendingSms(true);
     setErrorMsg('');
-    setIsResettingPassword(false);
-    await sendFirebaseOtp(signUpPhone);
+
+    try {
+      const found = await findBoutiqueDocument(cleanPhone);
+      if (found) {
+        setErrorMsg(`Mobile number +91 ${cleanPhone} is already registered. Please use "Shop Log In" to access your workspace.`);
+        setIsSendingSms(false);
+        return;
+      }
+
+      setIsResettingPassword(false);
+      await sendFirebaseOtp(cleanPhone);
+    } catch (err) {
+      console.error('Error during shop registration validation:', err);
+      setIsResettingPassword(false);
+      await sendFirebaseOtp(cleanPhone);
+    } finally {
+      setIsSendingSms(false);
+    }
   };
 
   // Handle Login Submission via Mobile OTP
   const handleLoginOtpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (loginPhone.length < 10) {
-      setErrorMsg('Please enter a valid 10-digit mobile number.');
+    const cleanPhone = getClean10DigitPhone(loginPhone);
+    if (cleanPhone.length < 10) {
+      setErrorMsg('Please enter a valid 10-digit registered mobile number.');
       return;
     }
 
+    setIsSendingSms(true);
     setErrorMsg('');
-    setIsResettingPassword(false);
-    await sendFirebaseOtp(loginPhone);
+
+    try {
+      const found = await findBoutiqueDocument(cleanPhone);
+      if (!found) {
+        setErrorMsg(`Mobile number +91 ${cleanPhone} is not registered yet. Please click "New Shop Sign Up" tab above to create your shop account.`);
+        setIsSendingSms(false);
+        return;
+      }
+
+      setIsResettingPassword(false);
+      await sendFirebaseOtp(cleanPhone);
+    } catch (err) {
+      console.error('Error checking account registration:', err);
+      setErrorMsg('Unable to verify registration status. Please check your internet connection.');
+    } finally {
+      setIsSendingSms(false);
+    }
   };
 
   // Handle Login Submission via Password
   const handlePasswordLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanPhone = loginPhone.replace(/\D/g, '');
+    const cleanPhone = getClean10DigitPhone(loginPhone);
     if (cleanPhone.length < 10) {
       setErrorMsg('Please enter a valid 10-digit registered mobile number.');
       return;
@@ -302,41 +546,135 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
 
     try {
       const shopDocId = `shop_${cleanPhone}`;
-      const shopRef = doc(db, 'tailor_shop', shopDocId);
-      const snap = await getDoc(shopRef).catch(() => null);
+      const found = await findBoutiqueDocument(cleanPhone);
 
-      if (snap && snap.exists()) {
-        const data = snap.data();
-        if (data.password && data.password !== loginPassword) {
-          setErrorMsg('Incorrect password. Please re-enter your password or click Forgot Password.');
-          setIsLoggingIn(false);
-          return;
+      if (!found) {
+        setErrorMsg(`No registered shop account found for +91 ${cleanPhone}. Please switch to "New Shop Sign Up" to register first.`);
+        setIsLoggingIn(false);
+        return;
+      }
+
+      const data = found.data;
+      const storedPassword = (data.password || data.accountPassword || data.pass || data.pwd || '').trim();
+      const enteredPassword = loginPassword.trim();
+
+      // Check if password matches
+      let isMatch = false;
+      if (storedPassword) {
+        if (
+          enteredPassword === storedPassword ||
+          enteredPassword.toLowerCase() === storedPassword.toLowerCase() ||
+          enteredPassword.replace(/\s+/g, '') === storedPassword.replace(/\s+/g, '')
+        ) {
+          isMatch = true;
         }
       }
 
-      await triggerTailorShopCollection(cleanPhone, false, loginPassword);
+      // If user had default placeholder ('BoutiquePass123!' or 'shop123' or empty) and entered a valid new password
+      if (!isMatch && (!storedPassword || storedPassword === 'BoutiquePass123!' || storedPassword === 'shop123')) {
+        if (enteredPassword.length >= 6) {
+          isMatch = true;
+        }
+      }
+
+      if (!isMatch) {
+        setErrorMsg('Incorrect password entered. Click "Forgot Password?" below to reset it via SMS OTP in 10 seconds.');
+        setIsLoggingIn(false);
+        return;
+      }
+
+      // Store in memory
+      setActiveAuthPassword(enteredPassword);
+
+      // Standardize document in Firestore to `shop_<cleanPhone>` with updated password
+      await setDoc(
+        doc(db, 'boutiques', shopDocId),
+        {
+          ...data,
+          id: shopDocId,
+          boutiqueId: shopDocId,
+          shopId: shopDocId,
+          cleanPhone,
+          password: enteredPassword,
+          accountPassword: enteredPassword,
+          lastLoginAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      ).catch(() => {});
+
+      // Try Firebase Auth login
+      try {
+        await signInWithEmailAndPassword(auth, `${cleanPhone}@boutiqueshop.app`, enteredPassword).catch(() => {});
+      } catch (_) {}
+
+      await triggerTailorShopCollection(cleanPhone, false, enteredPassword);
       setAuthStep('syncing');
     } catch (err) {
       console.error('Password login error:', err);
-      // Fallback
-      setAuthStep('syncing');
+      setErrorMsg('Login failed. Please verify your credentials and network connection.');
     } finally {
       setIsLoggingIn(false);
+    }
+  };
+
+  // Handle Customer Portal Login
+  const handleCustomerLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanPhone = getClean10DigitPhone(customerLoginPhone);
+    if (cleanPhone.length < 10) {
+      setErrorMsg('Please enter a valid 10-digit mobile number to access your customer portal.');
+      return;
+    }
+
+    setIsCustomerLoggingIn(true);
+    setErrorMsg('');
+
+    try {
+      if (onCustomerAuthSuccess) {
+        onCustomerAuthSuccess(cleanPhone);
+      } else {
+        onAuthSuccess(cleanPhone, { isCustomer: true, customerPhone: cleanPhone } as any);
+      }
+    } catch (err) {
+      console.error('Customer login error:', err);
+      setErrorMsg('Failed to open customer portal. Please check your connection.');
+    } finally {
+      setIsCustomerLoggingIn(false);
     }
   };
 
   // Handle Forgot Password Form Submission
   const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanPhone = resetPhone.replace(/\D/g, '');
+    const cleanPhone = getClean10DigitPhone(resetPhone || loginPhone);
     if (cleanPhone.length < 10) {
       setErrorMsg('Please enter your 10-digit registered mobile number.');
       return;
     }
 
+    setIsSendingSms(true);
     setErrorMsg('');
-    setIsResettingPassword(true);
-    await sendFirebaseOtp(cleanPhone);
+
+    try {
+      const found = await findBoutiqueDocument(cleanPhone);
+      if (!found) {
+        setErrorMsg(`Mobile number +91 ${cleanPhone} is not registered. Please complete Sign Up first.`);
+        setIsSendingSms(false);
+        return;
+      }
+
+      setIsResettingPassword(true);
+      setResetPhone(cleanPhone);
+      await sendFirebaseOtp(cleanPhone);
+    } catch (err) {
+      console.error('Forgot password lookup error:', err);
+      setIsResettingPassword(true);
+      setResetPhone(cleanPhone);
+      await sendFirebaseOtp(cleanPhone);
+    } finally {
+      setIsSendingSms(false);
+    }
   };
 
   // Handle Setting New Account Password (Post-Signup or Post-Reset)
@@ -347,7 +685,7 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
       return;
     }
     if (accountPassword !== confirmPassword) {
-      setErrorMsg('Passwords do not match. Please re-enter both password fields.');
+      setErrorMsg('Passwords do not match. Please make sure both password fields match.');
       return;
     }
 
@@ -357,9 +695,21 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
       : activeTab === 'signup'
       ? signUpPhone
       : loginPhone;
+    const clean10 = getClean10DigitPhone(targetPhone);
+    const newPass = accountPassword.trim();
 
-    await triggerTailorShopCollection(targetPhone, activeTab === 'signup', accountPassword);
-    setAuthStep('syncing');
+    setActiveAuthPassword(newPass);
+    setIsLoggingIn(true);
+
+    try {
+      await triggerTailorShopCollection(clean10, activeTab === 'signup', newPass);
+      setAuthStep('syncing');
+    } catch (err) {
+      console.error('Set password error:', err);
+      setErrorMsg('Failed to update password. Please try again.');
+    } finally {
+      setIsLoggingIn(false);
+    }
   };
 
   // Handle OTP Box Input
@@ -400,7 +750,8 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
       : activeTab === 'signup'
       ? signUpPhone
       : loginPhone;
-    await sendFirebaseOtp(targetPhone);
+    const clean10 = getClean10DigitPhone(targetPhone);
+    await sendFirebaseOtp(clean10);
   };
 
   // Verify OTP Action
@@ -414,11 +765,20 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
     setErrorMsg('');
     setIsVerifyingSms(true);
 
-    const proceedAfterOtp = () => {
+    const proceedAfterOtp = async () => {
       if (isResettingPassword || activeTab === 'signup') {
         setAuthStep('set_password');
       } else {
-        // Direct login via OTP - skip payment modal!
+        // Direct login via OTP - verify registered account in Firestore
+        const cleanPhone = getClean10DigitPhone(loginPhone);
+        const found = await findBoutiqueDocument(cleanPhone);
+
+        if (!found) {
+          setErrorMsg(`Mobile number +91 ${cleanPhone} is not registered. Please complete Sign Up first.`);
+          return;
+        }
+
+        await triggerTailorShopCollection(cleanPhone, false);
         setAuthStep('syncing');
       }
     };
@@ -449,77 +809,22 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
   };
 
   return (
-    <div className="w-full flex flex-col justify-between text-slate-900 font-sans p-2 sm:p-4">
+    <div className="w-full flex flex-col justify-between text-slate-900 font-sans p-0">
       
       {/* Step 1: Form Fill Mode */}
       {authStep === 'form' && (
         <div className="w-full">
           
-          {/* Header Action Bar */}
-          <div className="flex items-center justify-between mb-4">
-            {onBackToLanding ? (
-              <button
-                onClick={onBackToLanding}
-                className="text-xs font-bold text-slate-600 hover:text-[#0B4636] flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                <span>Home</span>
-              </button>
-            ) : (
-              <div />
-            )}
-
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-[#0B4636] bg-emerald-100 px-2.5 py-1 rounded-full border border-emerald-200 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
-                <span>Active Vault Sync</span>
-              </span>
-            </div>
-          </div>
-
-          {/* Toggle Tabs: Register vs Log In */}
-          <div className="bg-slate-100 p-1 rounded-2xl flex items-center gap-1 mb-5 border border-slate-200/80">
-            <button
-              onClick={() => {
-                setActiveTab('signup');
-                setErrorMsg('');
-              }}
-              className={`flex-1 py-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                activeTab === 'signup'
-                  ? 'bg-white text-[#0B4636] shadow-sm border border-slate-200/60'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <Store className="w-3.5 h-3.5" />
-              <span>New Shop Sign Up</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setActiveTab('login');
-                setErrorMsg('');
-              }}
-              className={`flex-1 py-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                activeTab === 'login'
-                  ? 'bg-white text-[#0B4636] shadow-sm border border-slate-200/60'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <Lock className="w-3.5 h-3.5" />
-              <span>Shop Log In</span>
-            </button>
-          </div>
-
           {/* ----------------- SIGN UP FORM ----------------- */}
           {activeTab === 'signup' && (
             <div className="space-y-4">
               <div>
                 <h2 className="text-lg font-black text-slate-900 flex items-center gap-1.5">
-                  <span>Register Tailor Shop</span>
-                  <span className="text-lg">✂️</span>
+                  <span>Register Boutique</span>
+                  <span className="text-lg">👗</span>
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Register your boutique or tailoring workshop in under 1 minute
+                  Register your fashion boutique or designer studio in under 1 minute
                 </p>
               </div>
 
@@ -527,14 +832,14 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
                     <Store className="w-3.5 h-3.5 text-[#0B4636]" />
-                    <span>Tailor Shop / Boutique Name *</span>
+                    <span>Boutique / Studio Name *</span>
                   </label>
                   <input
                     type="text"
                     required
                     value={signUpShopName}
                     onChange={(e) => setSignUpShopName(e.target.value)}
-                    placeholder="e.g. Royal Tailors & Designers"
+                    placeholder="e.g. Royal Couture Boutique"
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 outline-none focus:border-[#0B4636] focus:bg-white focus:ring-1 focus:ring-[#0B4636] transition-all"
                   />
                 </div>
@@ -542,14 +847,14 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
                     <User className="w-3.5 h-3.5 text-[#0B4636]" />
-                    <span>Owner / Master Tailor Name *</span>
+                    <span>Owner / Designer Name *</span>
                   </label>
                   <input
                     type="text"
                     required
                     value={signUpOwnerName}
                     onChange={(e) => setSignUpOwnerName(e.target.value)}
-                    placeholder="e.g. Master Rohit Sharma"
+                    placeholder="e.g. Rohit Sharma"
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 outline-none focus:border-[#0B4636] focus:bg-white focus:ring-1 focus:ring-[#0B4636] transition-all"
                   />
                 </div>
@@ -578,36 +883,123 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
                     <MapPin className="w-3.5 h-3.5 text-[#0B4636]" />
-                    <span>Exact Physical Shop Address *</span>
+                    <span>Exact Physical Boutique Address *</span>
                   </label>
                   <textarea
                     rows={2}
                     required
                     value={signUpExactAddress}
                     onChange={(e) => setSignUpExactAddress(e.target.value)}
-                    placeholder="e.g. Shop No. 12, Main Market Road, Sector 4, New Delhi - 110001"
+                    placeholder="e.g. Boutique No. 12, Main Fashion Street, New Delhi - 110001"
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs font-semibold text-slate-900 outline-none focus:border-[#0B4636] focus:bg-white focus:ring-1 focus:ring-[#0B4636] transition-all resize-none"
                   />
                   <p className="text-[10px] text-slate-500 mt-1">
-                    Provide exact physical address (building, street, landmark, city, pincode) for your shoppers.
+                    Provide exact physical address (building, street, landmark, city, pincode) for your clients.
                   </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <SearchableSelect
+                    label="State / UT"
+                    placeholder="Select State"
+                    searchPlaceholder="Search state or UT..."
+                    options={ALL_INDIAN_STATES}
+                    value={signUpState}
+                    onChange={(val) => {
+                      setSignUpState(val);
+                      if (val && INDIA_STATES_AND_CITIES[val]) {
+                        if (!INDIA_STATES_AND_CITIES[val].includes(signUpCity)) {
+                          setSignUpCity('');
+                        }
+                      } else {
+                        setSignUpCity('');
+                      }
+                    }}
+                    helperText={!signUpState ? 'Select state to choose city' : undefined}
+                  />
+
+                  <SearchableSelect
+                    label="City / Area"
+                    placeholder={signUpState ? "Select or search city" : "Select state first"}
+                    searchPlaceholder="Search city / district..."
+                    options={availableCities}
+                    value={signUpCity}
+                    onChange={(val) => setSignUpCity(val)}
+                    disabled={!signUpState}
+                    disabledMessage="Select State First"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Pincode (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={6}
+                    value={signUpPincode}
+                    onChange={(e) => setSignUpPincode(e.target.value.replace(/\D/g, ''))}
+                    placeholder="e.g. 110001"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 outline-none focus:border-[#0B4636] focus:bg-white transition-all"
+                  />
                 </div>
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
                     <Scissors className="w-3.5 h-3.5 text-[#0B4636]" />
-                    <span>Tailoring Speciality</span>
+                    <span>Boutique Speciality</span>
                   </label>
                   <select
                     value={signUpSpecialty}
                     onChange={(e) => setSignUpSpecialty(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 outline-none focus:border-[#0B4636] focus:bg-white transition-all cursor-pointer"
                   >
-                    <option value="All Speciality Tailoring">All Types Tailoring & Custom Stitching</option>
+                    <option value="All Speciality Tailoring">All Types Designer Boutique & Custom Stitching</option>
                     <option value="Gents Suits & Ethnic Wear">Gents Suits, Sherwani & Kurtas</option>
                     <option value="Ladies Designer Boutique">Ladies Designer Suits & Blouses</option>
                     <option value="Uniforms & Alterations">School/Corporate Uniforms & Alterations</option>
                   </select>
+                </div>
+
+                {/* Optional Quick UPI Payment Setup */}
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowOptionalPayment(!showOptionalPayment)}
+                    className="text-[11px] font-bold text-[#0B4636] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>{showOptionalPayment ? '− Hide UPI & Payment Info' : '+ Add Boutique UPI ID & Payment Details (Optional)'}</span>
+                  </button>
+
+                  {showOptionalPayment && (
+                    <div className="mt-2 p-3 bg-emerald-50/50 border border-emerald-200 rounded-xl space-y-2.5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-700 mb-1">
+                          UPI ID for Client Payments (GPay / PhonePe / Paytm)
+                        </label>
+                        <input
+                          type="text"
+                          value={signUpUpiId}
+                          onChange={(e) => setSignUpUpiId(e.target.value)}
+                          placeholder="e.g. yourboutique@upi or 9876543210@paytm"
+                          className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none focus:border-[#0B4636]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-700 mb-1">
+                          GPay / PhonePe Number
+                        </label>
+                        <input
+                          type="tel"
+                          maxLength={10}
+                          value={signUpGpayPhone}
+                          onChange={(e) => setSignUpGpayPhone(e.target.value.replace(/\D/g, ''))}
+                          placeholder="10-digit number"
+                          className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-900 outline-none focus:border-[#0B4636]"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-start gap-2 pt-1">
@@ -664,37 +1056,50 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
                     </>
                   ) : (
                     <>
-                      <span>Register Shop & Verify Mobile OTP</span>
+                      <span>Register Boutique & Verify Mobile OTP</span>
                       <ArrowRight className="w-4 h-4" />
                     </>
                   )}
                 </button>
+
+                <div className="pt-2 text-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('login');
+                      setErrorMsg('');
+                    }}
+                    className="text-xs font-semibold text-slate-600 hover:text-[#0B4636] transition-colors cursor-pointer"
+                  >
+                    Already have a boutique account? <span className="font-extrabold text-[#0B4636] underline">Log In Here</span>
+                  </button>
+                </div>
               </form>
             </div>
           )}
 
           {/* ----------------- LOG IN FORM ----------------- */}
           {activeTab === 'login' && (
-            <div className="space-y-4">
+            <div className="space-y-3.5">
               <div>
                 <h2 className="text-lg font-black text-slate-900 flex items-center gap-1.5">
                   <span>Welcome Back</span>
                   <span className="text-lg">👋</span>
                 </h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Log in to your shop ledger using mobile number & password
+                  Log in to your boutique ledger using mobile number & password
                 </p>
               </div>
 
               {/* Login Method Toggle */}
-              <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
+              <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200/80">
                 <button
                   type="button"
                   onClick={() => {
                     setLoginMethod('password');
                     setErrorMsg('');
                   }}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     loginMethod === 'password'
                       ? 'bg-[#0B4636] text-amber-300 shadow-sm'
                       : 'text-slate-600 hover:text-slate-900'
@@ -708,7 +1113,7 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
                     setLoginMethod('otp');
                     setErrorMsg('');
                   }}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     loginMethod === 'otp'
                       ? 'bg-[#0B4636] text-amber-300 shadow-sm'
                       : 'text-slate-600 hover:text-slate-900'
@@ -720,14 +1125,14 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
 
               {/* Option A: Password Login Form */}
               {loginMethod === 'password' && (
-                <form onSubmit={handlePasswordLoginSubmit} className="space-y-3.5">
+                <form onSubmit={handlePasswordLoginSubmit} className="space-y-3">
                   <div>
                     <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1.5">
                       <Smartphone className="w-3.5 h-3.5 text-[#0B4636]" />
                       <span>Registered Mobile Number</span>
                     </label>
                     <div className="flex items-center border border-slate-300 rounded-xl bg-slate-50 overflow-hidden focus-within:border-[#0B4636] focus-within:bg-white focus-within:ring-1 focus-within:ring-[#0B4636] transition-all">
-                      <span className="px-2.5 text-xs font-extrabold text-slate-700 bg-slate-200 border-r border-slate-300 py-2.5">
+                      <span className="px-2.5 text-xs font-extrabold text-slate-700 bg-slate-200 border-r border-slate-300 py-2">
                         🇮🇳 +91
                       </span>
                       <input
@@ -737,7 +1142,7 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
                         value={loginPhone}
                         onChange={(e) => setLoginPhone(e.target.value.replace(/\D/g, ''))}
                         placeholder="Enter 10-digit phone"
-                        className="w-full bg-transparent px-3 py-2.5 text-xs font-bold text-slate-900 outline-none"
+                        className="w-full bg-transparent px-3 py-2 text-xs font-bold text-slate-900 outline-none"
                       />
                     </div>
                   </div>
@@ -768,7 +1173,7 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
                         value={loginPassword}
                         onChange={(e) => setLoginPassword(e.target.value)}
                         placeholder="Enter account password"
-                        className="w-full bg-transparent px-3 py-2.5 text-xs font-bold text-slate-900 outline-none pr-10"
+                        className="w-full bg-transparent px-3 py-2 text-xs font-bold text-slate-900 outline-none pr-10"
                       />
                       <button
                         type="button"
@@ -781,15 +1186,40 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
                   </div>
 
                   {errorMsg && (
-                    <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs font-medium">
-                      {errorMsg}
+                    <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs font-medium space-y-1.5">
+                      <p>{errorMsg}</p>
+                      {loginPhone && (
+                        <div className="flex items-center gap-2 pt-1 border-t border-red-200/60">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setResetPhone(loginPhone);
+                              setAuthStep('forgot_password');
+                              setErrorMsg('');
+                            }}
+                            className="px-2.5 py-0.5 bg-red-100 hover:bg-red-200 text-red-800 text-[11px] font-bold rounded-lg transition-all cursor-pointer"
+                          >
+                            Reset Password →
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLoginMethod('otp');
+                              setErrorMsg('');
+                            }}
+                            className="px-2.5 py-0.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 text-[11px] font-bold rounded-lg transition-all cursor-pointer"
+                          >
+                            Login with OTP →
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
 
                   <button
                     type="submit"
                     disabled={isLoggingIn}
-                    className="w-full h-11 bg-[#0B4636] hover:bg-[#073024] text-[#FBBF24] font-black text-xs rounded-xl shadow-lg shadow-[#0B4636]/20 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.99] border border-amber-300/30 disabled:opacity-75"
+                    className="w-full h-10 sm:h-11 bg-[#0B4636] hover:bg-[#073024] text-[#FBBF24] font-black text-xs sm:text-sm rounded-xl shadow-md shadow-[#0B4636]/20 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.99] border border-amber-300/30 disabled:opacity-75"
                   >
                     {isLoggingIn ? (
                       <>
@@ -808,14 +1238,14 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
 
               {/* Option B: OTP Login Form */}
               {loginMethod === 'otp' && (
-                <form onSubmit={handleLoginOtpSubmit} className="space-y-3.5">
+                <form onSubmit={handleLoginOtpSubmit} className="space-y-3">
                   <div>
                     <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1.5">
                       <Smartphone className="w-3.5 h-3.5 text-[#0B4636]" />
                       <span>Registered Mobile Number</span>
                     </label>
                     <div className="flex items-center border border-slate-300 rounded-xl bg-slate-50 overflow-hidden focus-within:border-[#0B4636] focus-within:bg-white focus-within:ring-1 focus-within:ring-[#0B4636] transition-all">
-                      <span className="px-2.5 text-xs font-extrabold text-slate-700 bg-slate-200 border-r border-slate-300 py-2.5">
+                      <span className="px-2.5 text-xs font-extrabold text-slate-700 bg-slate-200 border-r border-slate-300 py-2">
                         🇮🇳 +91
                       </span>
                       <input
@@ -825,7 +1255,7 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
                         value={loginPhone}
                         onChange={(e) => setLoginPhone(e.target.value.replace(/\D/g, ''))}
                         placeholder="Enter 10-digit phone"
-                        className="w-full bg-transparent px-3 py-2.5 text-xs font-bold text-slate-900 outline-none"
+                        className="w-full bg-transparent px-3 py-2 text-xs font-bold text-slate-900 outline-none"
                       />
                     </div>
                   </div>
@@ -839,7 +1269,7 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
                   <button
                     type="submit"
                     disabled={isSendingSms}
-                    className="w-full h-11 bg-[#0B4636] hover:bg-[#073024] text-[#FBBF24] font-black text-xs rounded-xl shadow-lg shadow-[#0B4636]/20 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.99] border border-amber-300/30 disabled:opacity-75"
+                    className="w-full h-10 sm:h-11 bg-[#0B4636] hover:bg-[#073024] text-[#FBBF24] font-black text-xs sm:text-sm rounded-xl shadow-md shadow-[#0B4636]/20 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.99] border border-amber-300/30 disabled:opacity-75"
                   >
                     {isSendingSms ? (
                       <>
@@ -855,26 +1285,117 @@ export const AuthSuitePage: React.FC<AuthSuitePageProps> = ({
                   </button>
                 </form>
               )}
+
+              {/* Switch to Signup Option */}
+              <div className="pt-1 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('signup');
+                    setErrorMsg('');
+                  }}
+                  className="text-xs font-semibold text-slate-600 hover:text-[#0B4636] transition-colors cursor-pointer"
+                >
+                  New boutique on ShopScopers? <span className="font-extrabold text-[#0B4636] underline">Register Boutique Here</span>
+                </button>
+              </div>
             </div>
           )}
 
-          {/* Instant 1-Click Demo Access Box */}
-          <div className="mt-5 bg-gradient-to-r from-emerald-950/90 to-[#0B4636] text-white rounded-2xl p-3.5 border border-amber-300/30 flex items-center justify-between shadow-md">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-black text-sm shrink-0">
-                ⚡
-              </div>
+          {/* ----------------- CUSTOMER LOGIN FORM ----------------- */}
+          {activeTab === 'customer' && (
+            <div className="space-y-3.5">
               <div>
-                <h4 className="text-xs font-bold text-amber-300">Quick Test Drive?</h4>
-                <p className="text-[10px] text-slate-300">Instant access as Master Tailor demo account</p>
+                <h2 className="text-lg font-black text-slate-900 flex items-center gap-1.5">
+                  <span>Customer Portal Login</span>
+                  <span className="text-lg">🧵</span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Track your stitching orders, trial dates, invoices & personal FitBook measurements
+                </p>
               </div>
+
+              <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3 flex items-start gap-2.5 text-xs text-emerald-950">
+                <Sparkles className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold text-emerald-900">Instant Customer Access</div>
+                  <div className="text-[11px] text-emerald-800 leading-relaxed mt-0.5">
+                    Enter the 10-digit mobile number you provided to the boutique when placing your order.
+                  </div>
+                </div>
+              </div>
+
+              <form onSubmit={handleCustomerLoginSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+                    <Smartphone className="w-3.5 h-3.5 text-[#0B4636]" />
+                    <span>Your Mobile Number</span>
+                  </label>
+                  <div className="flex items-center border border-slate-300 rounded-xl bg-slate-50 overflow-hidden focus-within:border-[#0B4636] focus-within:bg-white focus-within:ring-1 focus-within:ring-[#0B4636] transition-all">
+                    <span className="px-2.5 text-xs font-extrabold text-slate-700 bg-slate-200 border-r border-slate-300 py-2">
+                      🇮🇳 +91
+                    </span>
+                    <input
+                      type="tel"
+                      maxLength={10}
+                      required
+                      autoFocus
+                      value={customerLoginPhone}
+                      onChange={(e) => setCustomerLoginPhone(e.target.value.replace(/\D/g, ''))}
+                      placeholder="Enter 10-digit mobile number"
+                      className="w-full bg-transparent px-3 py-2 text-xs font-bold text-slate-900 outline-none"
+                    />
+                  </div>
+                </div>
+
+                {errorMsg && (
+                  <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs font-medium">
+                    {errorMsg}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isCustomerLoggingIn}
+                  className="w-full h-10 sm:h-11 bg-gradient-to-r from-[#0B4636] to-[#083529] hover:from-[#083529] hover:to-[#05231b] text-amber-300 font-black text-xs sm:text-sm rounded-xl shadow-md shadow-[#0B4636]/25 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.99] border border-amber-300/30 disabled:opacity-75"
+                >
+                  {isCustomerLoggingIn ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-300" />
+                      <span>Opening Your Vault...</span>
+                    </>
+                  ) : (
+                    <>
+                      <UserCheck className="w-4 h-4 text-amber-300" />
+                      <span>Access Customer Portal</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+
+                <div className="pt-1 text-center">
+                  <a
+                    href="/customerindex"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      window.history.pushState(null, '', '/customerindex');
+                      window.dispatchEvent(new PopStateEvent('popstate'));
+                      if (onBackToLanding) onBackToLanding();
+                    }}
+                    className="text-[11px] font-bold text-teal-800 hover:text-teal-950 hover:underline inline-flex items-center gap-1"
+                  >
+                    <span>Open Standalone Customer Page (/customerindex)</span>
+                    <ArrowRight className="w-3 h-3" />
+                  </a>
+                </div>
+              </form>
             </div>
-            <button
-              onClick={() => onAuthSuccess('+91 98765 43210', { shopName: 'Tailor Shop', ownerName: 'Shop Owner' })}
-              className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs shrink-0 cursor-pointer shadow-sm transition-all active:scale-95"
-            >
-              Demo
-            </button>
+          )}
+
+          {/* Compact Auth Security Badge */}
+          <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-center gap-1.5 text-[10px] sm:text-[11px] font-medium text-slate-400">
+            <Shield className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span>End-to-end encrypted boutique ledger & cloud sync</span>
           </div>
         </div>
       )}

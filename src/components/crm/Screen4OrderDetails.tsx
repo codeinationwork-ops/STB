@@ -29,6 +29,8 @@ import { OrderCompletedModal } from './OrderCompletedModal';
 import { OrderDeliveryModal } from './OrderDeliveryModal';
 import { getWhatsAppUrl, clean10DigitPhone, formatDisplayPhone } from '../../lib/phoneUtils';
 import { downloadReceiptPdf, sendWhatsAppWithPdfReceipt } from '../../lib/pdfReceiptGenerator';
+import { useLanguage } from '../../lib/LanguageContext';
+import { getMeasurementLabel } from '../../lib/measurementSpecs';
 
 interface Screen4OrderDetailsProps {
   order: TailorOrder;
@@ -55,6 +57,7 @@ export const Screen4OrderDetails: React.FC<Screen4OrderDetailsProps> = ({
   onAssignTimelineClick,
   isDesktopView = false,
 }) => {
+  const { t } = useLanguage();
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isPlayingVoice, setIsPlayingVoice] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -138,7 +141,7 @@ export const Screen4OrderDetails: React.FC<Screen4OrderDetailsProps> = ({
 
     const nonZeroMeasurements = Object.entries(order.measurements || {})
       .filter(([_, v]) => typeof v === 'string' && v.trim() !== '')
-      .map(([k, v]) => `<tr><td style="padding: 6px 12px; border: 1px solid #e2e8f0; background: #f8fafc; font-weight: 600; text-transform: capitalize;">${k.replace(/([A-Z])/g, ' $1').toLowerCase()}</td><td style="padding: 6px 12px; border: 1px solid #e2e8f0; font-weight: 800; color: #0B4636;">${v}</td></tr>`)
+      .map(([k, v]) => `<tr><td style="padding: 6px 12px; border: 1px solid #e2e8f0; background: #f8fafc; font-weight: 600;">${getMeasurementLabel(k)}</td><td style="padding: 6px 12px; border: 1px solid #e2e8f0; font-weight: 800; color: #0B4636;">${v}</td></tr>`)
       .join('');
 
     const htmlDoc = `<!DOCTYPE html>
@@ -231,27 +234,27 @@ export const Screen4OrderDetails: React.FC<Screen4OrderDetailsProps> = ({
     <div className={`min-h-full bg-[#F8F9FA] text-slate-900 font-sans ${isDesktopView ? 'p-6' : 'pb-20'}`}>
       {/* Top Header (Mobile Only) */}
       {!isDesktopView ? (
-        <div className="bg-[#0B4636] text-white p-4 sticky top-0 z-20 shadow-md flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="bg-[#0B4636] text-white p-3.5 sticky top-0 z-20 shadow-md flex items-center justify-between">
+          <div className="flex items-center gap-2.5 min-w-0">
             <button
               onClick={onBack}
-              className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 transition-all text-white cursor-pointer"
+              className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 transition-all text-white cursor-pointer shrink-0"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <div>
-              <h1 className="text-base font-extrabold tracking-tight flex items-center gap-2">
+            <div className="min-w-0">
+              <h1 className="text-sm font-extrabold tracking-tight flex items-center gap-1.5 truncate">
                 <span>{order.id}</span>
-                <span className="text-xs font-semibold text-amber-300">({order.garmentType})</span>
+                <span className="text-xs font-semibold text-amber-300 truncate">({order.garmentType})</span>
               </h1>
-              <p className="text-[10px] text-emerald-200">Order Details & Timeline</p>
+              <p className="text-[10px] text-emerald-200 truncate">Order Details & Timeline</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               onClick={handleDownloadReceipt}
-              className="p-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow flex items-center gap-1 cursor-pointer"
+              className="p-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow flex items-center gap-1 cursor-pointer"
               title="Download Receipt File"
             >
               <Download className="w-4 h-4" />
@@ -261,7 +264,7 @@ export const Screen4OrderDetails: React.FC<Screen4OrderDetailsProps> = ({
                 const text = `Hello ${order.customerName}, update regarding your ${order.garmentType} (${order.id}) at ${shopName}:\n\nStatus: ${order.status}\nBalance Due: ₹${order.balanceDue}\n\n📍 Shop Location on Google Maps:\n${mapUrl}`;
                 window.open(`https://wa.me/91${order.customerPhone.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`);
               }}
-              className="p-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow flex items-center gap-1 cursor-pointer"
+              className="p-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow flex items-center gap-1 cursor-pointer"
               title="Share on WhatsApp"
             >
               <Share2 className="w-4 h-4" />
@@ -270,13 +273,15 @@ export const Screen4OrderDetails: React.FC<Screen4OrderDetailsProps> = ({
         </div>
       ) : (
         <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-200">
-          <button
-            onClick={onBack}
-            className="text-xs font-bold text-slate-600 hover:text-[#0B4636] flex items-center gap-1 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-sm cursor-pointer"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Back to Dashboard</span>
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onBack}
+              className="text-xs font-bold text-slate-600 hover:text-[#0B4636] flex items-center gap-1 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-sm cursor-pointer"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>{t('nav.backToDashboard', 'Back to Dashboard')}</span>
+            </button>
+          </div>
 
           <div className="flex items-center gap-2">
             <span className="text-xs font-black text-slate-900 px-3 py-1.5 bg-slate-100 rounded-xl border border-slate-200">
@@ -287,7 +292,7 @@ export const Screen4OrderDetails: React.FC<Screen4OrderDetailsProps> = ({
               className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs shadow flex items-center gap-1.5 cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>Download Slip</span>
+              <span>{t('order.downloadSlip', 'Download Slip')}</span>
             </button>
             <button
               onClick={() => {
@@ -297,47 +302,67 @@ export const Screen4OrderDetails: React.FC<Screen4OrderDetailsProps> = ({
               className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow flex items-center gap-1.5 cursor-pointer"
             >
               <Share2 className="w-3.5 h-3.5" />
-              <span>Send WhatsApp Slip</span>
+              <span>{t('order.sendWhatsAppSlip', 'Send WhatsApp Slip')}</span>
             </button>
           </div>
         </div>
       )}
 
-      <div className={`space-y-4 ${isDesktopView ? 'w-full max-w-none' : 'p-4 max-w-2xl mx-auto'}`}>
+      <div className={`space-y-2.5 ${isDesktopView ? 'w-full max-w-none' : 'p-3 max-w-2xl mx-auto'}`}>
         {/* Customer Header Card */}
-        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex items-center justify-between">
-          <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Customer</span>
-            <h2 className="text-base font-extrabold text-slate-900">{order.customerName}</h2>
-            <p className="text-xs font-semibold text-slate-600">{order.customerPhone}</p>
+        <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-2xs flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+              <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Order #{order.id}</span>
+              <span
+                className={`px-1.5 py-0.2 rounded text-[9px] font-black border shadow-2xs ${
+                  order.orderCategory === 'Sale'
+                    ? 'bg-purple-100 text-purple-900 border-purple-200'
+                    : order.orderCategory === 'Alteration'
+                    ? 'bg-amber-100 text-amber-900 border-amber-200'
+                    : 'bg-emerald-100 text-emerald-900 border-emerald-200'
+                }`}
+              >
+                {order.orderCategory === 'Sale' ? '🛍️ Retail Sale' : order.orderCategory === 'Alteration' ? '✂️ Alteration' : '🧵 Stitching'}
+              </span>
+              {order.invoiceNumber && (
+                <span className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded font-mono font-bold">
+                  {order.invoiceNumber}
+                </span>
+              )}
+            </div>
+            <h2 className="text-sm font-black text-slate-900 truncate">{order.customerName}</h2>
+            <p className="text-xs font-semibold text-slate-500">{order.customerPhone}</p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 shrink-0">
             <a
-              href={`tel:${order.customerPhone.replace(/\D/g, '')}`}
-              className="w-10 h-10 rounded-xl bg-emerald-100 text-[#0B4636] flex items-center justify-center font-bold hover:bg-emerald-200 transition-all cursor-pointer"
+              href={`tel:${clean10DigitPhone(order.customerPhone)}`}
+              className="w-8 h-8 rounded-lg bg-emerald-50 text-[#0B4636] border border-emerald-200 flex items-center justify-center font-bold hover:bg-emerald-100 transition-all cursor-pointer shadow-2xs"
+              title="Call Customer"
             >
-              <Phone className="w-5 h-5" />
+              <Phone className="w-4 h-4" />
             </a>
             <a
-              href={`https://wa.me/91${order.customerPhone.replace(/\D/g, '')}`}
+              href={`https://wa.me/91${clean10DigitPhone(order.customerPhone)}`}
               target="_blank"
               rel="noreferrer"
-              className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold hover:bg-emerald-700 transition-all cursor-pointer"
+              className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold hover:bg-emerald-700 transition-all cursor-pointer shadow-2xs"
+              title="Message on WhatsApp"
             >
-              <MessageSquare className="w-5 h-5" />
+              <MessageSquare className="w-4 h-4" />
             </a>
           </div>
         </div>
 
         {/* 5-Stage Milestone Tracker */}
-        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
+        <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-2xs space-y-2">
           <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold text-[#0B4636] uppercase tracking-wider flex items-center gap-1.5">
-              <Clock className="w-4 h-4" />
+            <h3 className="text-xs font-black text-[#0B4636] uppercase tracking-wider flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5" />
               <span>Order Lifecycle & Status</span>
             </h3>
-            <span className="text-[10px] font-bold text-slate-500">Tap any stage to transition</span>
+            <span className="text-[9px] font-bold text-slate-400">Tap stage to transition</span>
           </div>
 
           <OrderStatusTracker
@@ -347,25 +372,133 @@ export const Screen4OrderDetails: React.FC<Screen4OrderDetailsProps> = ({
           />
         </div>
 
-        {/* Finished Stitched Garment Photos (If Completed or Delivered) */}
-        {order.stitchedPhotos && order.stitchedPhotos.length > 0 && (
-          <div className="bg-emerald-50/70 rounded-2xl p-4 border border-emerald-200 shadow-sm space-y-3">
+        {/* Category Specific View 1: Retail Sale Items */}
+        {order.orderCategory === 'Sale' && order.saleItems && order.saleItems.length > 0 && (
+          <div className="bg-white rounded-xl p-3 border border-purple-200 shadow-2xs space-y-2">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-black text-emerald-950 uppercase tracking-wider flex items-center gap-1.5">
-                <Camera className="w-4 h-4 text-emerald-700" />
-                <span>Finished Stitched Garment Photos ({order.stitchedPhotos.length})</span>
+              <h3 className="text-xs font-black text-purple-950 uppercase tracking-wider flex items-center gap-1">
+                <span>🛍️ Retail Sale Bill ({order.saleItems.length} Items)</span>
               </h3>
-              <span className="text-[10px] font-bold text-emerald-700">Uploaded for delivery</span>
+              {order.invoiceNumber && (
+                <span className="text-[10px] font-mono font-black text-purple-800 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+                  {order.invoiceNumber}
+                </span>
+              )}
             </div>
 
-            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
+            <div className="border border-slate-200 rounded-lg overflow-hidden text-xs">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-slate-100 text-slate-600 font-extrabold text-[10px]">
+                  <tr>
+                    <th className="p-2">Item Description</th>
+                    <th className="p-2 text-center">Qty</th>
+                    <th className="p-2 text-right">Unit Rate</th>
+                    <th className="p-2 text-right">Line Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium">
+                  {order.saleItems.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50/70">
+                      <td className="p-2 font-bold text-slate-900">
+                        <div>{item.name}</div>
+                        {item.sku && <span className="text-[9px] text-slate-400 font-mono">SKU: {item.sku}</span>}
+                      </td>
+                      <td className="p-2 text-center font-black">{item.quantity}</td>
+                      <td className="p-2 text-right">₹{item.unitPrice.toLocaleString('en-IN')}</td>
+                      <td className="p-2 text-right font-black text-[#0B4636]">
+                        ₹{(item.quantity * item.unitPrice - (item.discount || 0)).toLocaleString('en-IN')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {(order.taxAmount || order.discountAmount) ? (
+              <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 space-y-1 text-xs text-slate-600">
+                {order.discountAmount ? (
+                  <div className="flex justify-between font-bold text-rose-600">
+                    <span>Discount:</span>
+                    <span>- ₹{order.discountAmount.toLocaleString('en-IN')}</span>
+                  </div>
+                ) : null}
+                {order.taxAmount ? (
+                  <div className="flex justify-between font-bold">
+                    <span>GST / Tax:</span>
+                    <span>+ ₹{order.taxAmount.toLocaleString('en-IN')}</span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {/* Category Specific View 2: Alteration Tasks & Garment Intake */}
+        {order.orderCategory === 'Alteration' && (
+          <div className="bg-white rounded-xl p-3 border border-amber-200 shadow-2xs space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-black text-amber-950 uppercase tracking-wider flex items-center gap-1">
+                <Scissors className="w-3.5 h-3.5 text-amber-700" />
+                <span>Alteration Ticket Details</span>
+              </h3>
+              {order.alterationUrgency && (
+                <span className="text-[10px] font-black bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300">
+                  {order.alterationUrgency}
+                </span>
+              )}
+            </div>
+
+            <div className="p-2.5 bg-amber-50/70 border border-amber-200 rounded-lg space-y-1.5 text-xs">
+              <div className="font-extrabold text-slate-900">
+                <span className="text-slate-500 font-bold">Garment Provided: </span>
+                {order.alterationGarmentProvided || order.garmentType}
+              </div>
+
+              {order.alterationTasks && order.alterationTasks.length > 0 && (
+                <div className="space-y-1 pt-1">
+                  <span className="text-[10px] font-bold text-amber-900 block">Alteration Work Required:</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                    {order.alterationTasks.map((t, idx) => (
+                      <div key={idx} className="flex items-center gap-1.5 bg-white p-1.5 rounded-md border border-amber-200 font-bold text-slate-800 text-[11px]">
+                        <span className="text-amber-700 font-black">✓</span>
+                        <span>{t}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {order.defectNotes && (
+                <div className="pt-1.5 border-t border-amber-200/80 text-amber-950 text-[11px]">
+                  <span className="font-black text-amber-900">Pre-existing Garment Condition / Defects: </span>
+                  <span>{order.defectNotes}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Finished Stitched Garment Photos (If Completed or Delivered) */}
+        {order.stitchedPhotos && order.stitchedPhotos.length > 0 && (
+          <div className="bg-emerald-50/70 rounded-xl p-3 border border-emerald-200 shadow-2xs space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-black text-emerald-950 uppercase tracking-wider flex items-center gap-1">
+                <Camera className="w-3.5 h-3.5 text-emerald-700" />
+                <span>Finished Garment Photos ({order.stitchedPhotos.length})</span>
+              </h3>
+              <span className="text-[9px] font-bold text-emerald-700">Uploaded for delivery</span>
+            </div>
+
+            <div className="grid grid-cols-4 gap-2">
               {order.stitchedPhotos.map((photo, idx) => (
                 <div
                   key={idx}
                   onClick={() => setSelectedImage(photo)}
-                  className="aspect-square rounded-xl bg-white border border-emerald-300 overflow-hidden cursor-pointer hover:scale-105 transition-transform shadow-2xs group relative"
+                  className="aspect-square rounded-lg bg-white border border-emerald-300 overflow-hidden cursor-pointer hover:scale-105 transition-transform shadow-2xs group relative"
                 >
-                  <img src={photo} alt={`Finished garment ${idx + 1}`} className="w-full h-full object-cover" />
+                  {photo && photo.trim() !== '' ? (
+                    <img src={photo} alt={`Finished garment ${idx + 1}`} className="w-full h-full object-cover" />
+                  ) : null}
                   <span className="absolute bottom-1 right-1 bg-black/60 text-white text-[8px] px-1 rounded font-bold">
                     Zoom
                   </span>
@@ -376,53 +509,53 @@ export const Screen4OrderDetails: React.FC<Screen4OrderDetailsProps> = ({
         )}
 
         {/* Proof Attachments (Receipt & Voice Note) */}
-        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
-          <h3 className="text-xs font-bold text-[#0B4636] uppercase tracking-wider flex items-center gap-1.5">
-            <ImageIcon className="w-4 h-4" />
+        <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-2xs space-y-2">
+          <h3 className="text-xs font-black text-[#0B4636] uppercase tracking-wider flex items-center gap-1">
+            <ImageIcon className="w-3.5 h-3.5" />
             <span>Measurement Proof & Audio</span>
           </h3>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {/* Receipt Photo */}
-            <div className="border border-slate-200 rounded-xl p-2.5 bg-slate-50">
-              <span className="text-[10px] font-bold text-slate-500 block mb-1">Receipt / Measurement Slip</span>
-              {order.receiptImageUrl ? (
+            <div className="border border-slate-200 rounded-lg p-2 bg-slate-50">
+              <span className="text-[9px] font-bold text-slate-500 block mb-1">Receipt / Measurement Slip</span>
+              {order.receiptImageUrl && order.receiptImageUrl.trim() !== '' ? (
                 <div
                   onClick={() => setSelectedImage(order.receiptImageUrl)}
-                  className="h-32 rounded-lg bg-slate-200 overflow-hidden relative cursor-pointer group"
+                  className="h-28 rounded-md bg-slate-200 overflow-hidden relative cursor-pointer group"
                 >
                   <img src={order.receiptImageUrl} alt="Receipt" className="w-full h-full object-cover group-hover:scale-105 transition-all" />
-                  <span className="absolute bottom-1 right-1 bg-black/70 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">
+                  <span className="absolute bottom-1 right-1 bg-black/70 text-white text-[8px] px-1.5 py-0.5 rounded font-bold">
                     Tap to Zoom
                   </span>
                 </div>
               ) : (
-                <div className="h-32 rounded-lg border-2 border-dashed border-slate-300 flex items-center justify-center text-slate-400 text-xs font-medium">
+                <div className="h-28 rounded-md border-2 border-dashed border-slate-300 flex items-center justify-center text-slate-400 text-xs font-medium">
                   No slip attached
                 </div>
               )}
             </div>
 
             {/* Voice Note */}
-            <div className="border border-slate-200 rounded-xl p-2.5 bg-slate-50 flex flex-col justify-between">
+            <div className="border border-slate-200 rounded-lg p-2 bg-slate-50 flex flex-col justify-between">
               <div>
-                <span className="text-[10px] font-bold text-slate-500 block mb-1">Tailor Voice Instruction</span>
+                <span className="text-[9px] font-bold text-slate-500 block mb-1">Tailor Voice Instruction</span>
                 {order.voiceNoteUrl ? (
-                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-between mt-2">
+                  <div className="p-2.5 rounded-lg bg-purple-50 border border-purple-200 flex items-center justify-between mt-1">
                     <div className="flex items-center gap-2">
                       <button
                         onClick={toggleVoice}
-                        className={`w-10 h-10 rounded-full flex items-center justify-center text-white cursor-pointer transition-all ${
-                          isPlayingVoice ? 'bg-rose-600 animate-pulse' : 'bg-[#0B4636]'
+                        className={`w-8 h-8 rounded-full flex items-center justify-center text-white cursor-pointer transition-all ${
+                          isPlayingVoice ? 'bg-purple-600 animate-pulse' : 'bg-[#0B4636]'
                         }`}
                       >
-                        <Volume2 className="w-5 h-5" />
+                        <Volume2 className="w-4 h-4" />
                       </button>
                       <div>
                         <span className="text-xs font-bold text-slate-900 block">
-                          {isPlayingVoice ? 'Playing instruction...' : 'Audio Note (0:18s)'}
+                          {isPlayingVoice ? 'Playing instruction...' : `Audio Note (${order.voiceNoteDurationSec || 12}s)`}
                         </span>
-                        <span className="text-[10px] text-slate-500">Recorded at order creation</span>
+                        <span className="text-[9px] text-slate-500">Recorded at order creation</span>
                       </div>
                     </div>
                   </div>
@@ -435,133 +568,103 @@ export const Screen4OrderDetails: React.FC<Screen4OrderDetailsProps> = ({
         </div>
 
         {/* Measurements Table */}
-        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
-          <h3 className="text-xs font-bold text-[#0B4636] uppercase tracking-wider flex items-center gap-1.5">
+        {order.orderCategory !== 'Sale' && (
+        <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-2xs space-y-2">
+          <h3 className="text-xs font-black text-[#0B4636] uppercase tracking-wider flex items-center gap-1">
             <span>📏 Measurements Ledger</span>
           </h3>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-xs">
             {Object.entries(order.measurements).map(([key, val]) => {
               if (!val) return null;
               return (
-                <div key={key} className="p-1.5 bg-white rounded-lg border border-slate-200">
-                  <span className="text-[10px] text-slate-500 uppercase block font-semibold">{key}</span>
-                  <span className="text-sm font-black text-slate-900">{val} in</span>
+                <div key={key} className="p-2 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                  <span className="text-[10px] text-slate-500 font-bold block leading-tight line-clamp-1">{getMeasurementLabel(key)}</span>
+                  <span className="text-xs font-black text-slate-900 mt-0.5 block">{val}</span>
                 </div>
               );
             })}
           </div>
 
           {order.specialNotes && (
-            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+            <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
               <span className="font-bold block mb-0.5">Special Instructions:</span>
               {order.specialNotes}
             </div>
           )}
         </div>
+        )}
 
         {/* Financial Ledger & Payment History */}
-        <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
+        <div className="bg-white rounded-xl p-3 border border-slate-200 shadow-2xs space-y-2">
           <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold text-[#0B4636] uppercase tracking-wider flex items-center gap-1.5">
-              <DollarSign className="w-4 h-4" />
+            <h3 className="text-xs font-black text-[#0B4636] uppercase tracking-wider flex items-center gap-1">
+              <DollarSign className="w-3.5 h-3.5" />
               <span>Financial Ledger</span>
             </h3>
 
             {order.balanceDue > 0 && (
               <button
                 onClick={() => setShowPaymentModal(true)}
-                className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-[#0B4636] text-xs font-bold flex items-center gap-1 cursor-pointer"
+                className="px-2 py-1 rounded-md bg-emerald-100 hover:bg-emerald-200 text-[#0B4636] text-xs font-black flex items-center gap-1 cursor-pointer shadow-2xs"
               >
-                <Plus className="w-3.5 h-3.5" />
+                <Plus className="w-3 h-3" />
                 <span>+ Collect Payment</span>
               </button>
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-xl text-center">
+          <div className="grid grid-cols-3 gap-1.5 bg-slate-50 p-2.5 rounded-lg text-center border border-slate-200">
             <div>
-              <span className="text-[10px] font-bold text-slate-500 uppercase block">Total</span>
-              <span className="text-sm font-black text-slate-900">₹{order.totalAmount}</span>
+              <span className="text-[9px] font-bold text-slate-500 uppercase block">Total</span>
+              <span className="text-xs font-black text-slate-900">₹{order.totalAmount}</span>
             </div>
             <div>
-              <span className="text-[10px] font-bold text-emerald-700 uppercase block">Advance</span>
-              <span className="text-sm font-black text-emerald-700">₹{order.advancePaid}</span>
+              <span className="text-[9px] font-bold text-emerald-700 uppercase block">Advance</span>
+              <span className="text-xs font-black text-emerald-700">₹{order.advancePaid}</span>
             </div>
             <div>
-              <span className="text-[10px] font-bold text-rose-600 uppercase block">Balance</span>
-              <span className="text-sm font-black text-rose-600">₹{order.balanceDue}</span>
+              <span className="text-[9px] font-bold text-rose-600 uppercase block">Balance</span>
+              <span className="text-xs font-black text-rose-600">₹{order.balanceDue}</span>
             </div>
           </div>
 
+          {/* Payment Status Highlight Banner */}
+          {order.balanceDue === 0 ? (
+            <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center justify-between">
+              <span>✓ Fully Paid in Full (Settled via {order.paymentMode})</span>
+              <span className="text-[10px] bg-emerald-600 text-white px-1.5 py-0.2 rounded font-black">PAID</span>
+            </div>
+          ) : (
+            <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-900 text-xs font-bold flex items-center justify-between">
+              <span>⚠️ Balance Due: ₹{order.balanceDue} at Handover</span>
+              <button
+                onClick={() => setShowPaymentModal(true)}
+                className="text-[10px] bg-rose-600 text-white px-2 py-0.5 rounded font-black cursor-pointer shadow-2xs"
+              >
+                Collect Now
+              </button>
+            </div>
+          )}
+
           {/* Payment History timeline */}
-          <div className="space-y-1.5 pt-1">
-            <span className="text-[11px] font-bold text-slate-700">Payment Transactions:</span>
+          <div className="space-y-1 pt-1">
+            <span className="text-[10px] font-bold text-slate-600">Payment Transactions:</span>
             {order.paymentHistory.map((pm) => (
-              <div key={pm.id} className="p-2 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
+              <div key={pm.id} className="p-1.5 rounded-md bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
                 <div>
-                  <span className="font-bold text-slate-800">{pm.type} Payment ({pm.mode})</span>
-                  <span className="text-[10px] text-slate-400 block">{pm.date}</span>
+                  <span className="font-bold text-slate-800 text-[11px]">{pm.type} Payment ({pm.mode})</span>
+                  <span className="text-[9px] text-slate-400 block">{pm.date}</span>
                 </div>
-                <span className="font-extrabold text-emerald-700">+ ₹{pm.amount}</span>
+                <span className="font-black text-emerald-700">+ ₹{pm.amount}</span>
               </div>
             ))}
           </div>
         </div>
-
-        {/* Assign Tailor Card */}
-        {(() => {
-          const isUnassigned =
-            !order.assignedTailor ||
-            order.assignedTailor === 'Unassigned' ||
-            order.assignedTailor === 'Not Assigned';
-          const isInProgress = order.status === 'Stitching in Progress' || order.status === 'Trial';
-
-          return (
-            <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div
-                  className={`w-11 h-11 rounded-2xl flex items-center justify-center font-black text-sm shrink-0 ${
-                    isInProgress
-                      ? 'bg-indigo-100 text-indigo-900 border border-indigo-200'
-                      : isUnassigned
-                      ? 'bg-amber-100 text-amber-900 border border-amber-300'
-                      : 'bg-emerald-100 text-[#0B4636] border border-emerald-200'
-                  }`}
-                >
-                  {isInProgress ? '🧵' : isUnassigned ? '✂️' : '👨‍🔧'}
-                </div>
-                <div>
-                  <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
-                    Karigar / Tailor Status
-                  </span>
-                  <h4 className="text-xs sm:text-sm font-black text-slate-900">
-                    {isInProgress && isUnassigned
-                      ? 'In-Shop Stitching (Master Workshop)'
-                      : isUnassigned
-                      ? 'Karigar Not Assigned Yet'
-                      : order.assignedTailor}
-                  </h4>
-                  <p className="text-[11px] text-slate-500 font-semibold">
-                    {isInProgress ? 'Stitching in Progress' : 'Estimated Time'}: {order.estimatedHours || 3} Hours
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => onAssignTimelineClick(order)}
-                className="px-3.5 py-2 rounded-xl bg-[#0B4636] hover:bg-[#073024] text-amber-300 text-xs font-black shadow-sm cursor-pointer active:scale-95 transition-all shrink-0"
-              >
-                {!isUnassigned ? 'Change Tailor' : 'Assign Tailor'}
-              </button>
-            </div>
-          );
-        })()}
       </div>
 
       {/* Lightbox Modal */}
-      {selectedImage && (
+      {selectedImage && selectedImage.trim() !== '' && (
         <div
           onClick={() => setSelectedImage(null)}
           className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4"

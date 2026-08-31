@@ -11,7 +11,7 @@
         "customerPhone": { "type": "string" },
         "isRepeatCustomer": { "type": "boolean" },
         "garmentType": { "type": "string" },
-        "orderCategory": { "type": "string" },
+        "orderCategory": { "type": "string", "enum": ["Stitch", "New Stitch", "Alteration", "Sale"] },
         "subTypeStyle": { "type": "string" },
         "genderCategory": { "type": "string" },
         "measurementMode": { "type": "string" },
@@ -41,13 +41,23 @@
         "isOverdue": { "type": "boolean" },
         "daysOverdue": { "type": "number" },
         "isArchived": { "type": "boolean" },
-        "updatedAt": { "type": "string" }
+        "updatedAt": { "type": "string" },
+        "alterationTasks": { "type": "array" },
+        "alterationUrgency": { "type": "string" },
+        "defectNotes": { "type": "string" },
+        "alterationGarmentProvided": { "type": "string" },
+        "saleItems": { "type": "array" },
+        "subtotalAmount": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "taxAmount": { "type": "number" },
+        "gstIncluded": { "type": "boolean" },
+        "invoiceNumber": { "type": "string" }
       },
       "required": ["id", "customerName", "customerPhone", "garmentType", "totalAmount", "status", "dueDate"]
     },
-    "tailor_customers": {
-      "title": "Tailor Customers",
-      "description": "Customer directory with saved measurements and order history",
+    "customers": {
+      "title": "Customers",
+      "description": "Unified master customer directory with contact info, saved measurements, and order history",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
@@ -60,7 +70,10 @@
         "gender": { "type": "string" },
         "measurements": { "type": "object" },
         "notes": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "boutiqueId": { "type": "string" },
+        "boutiqueName": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
       },
       "required": ["id", "name", "phone"]
     },
@@ -78,40 +91,216 @@
       },
       "required": ["id", "name", "role"]
     },
-    "shop_profiles": {
-      "title": "Shop Profile",
-      "description": "Boutique tailoring shop branding, address, and UPI payment settings",
+    "boutiques": {
+      "title": "Boutiques",
+      "description": "Registered boutique profiles with business credentials, owner details, address, payment configuration, and setup parameters",
       "type": "object",
       "properties": {
+        "id": { "type": "string" },
+        "shopId": { "type": "string" },
+        "boutiqueId": { "type": "string" },
         "shopName": { "type": "string" },
         "ownerName": { "type": "string" },
         "phoneNumber": { "type": "string" },
+        "phone": { "type": "string" },
+        "cleanPhone": { "type": "string" },
         "address": { "type": "string" },
-        "googleMapUrl": { "type": "string" },
+        "exactAddress": { "type": "string" },
+        "city": { "type": "string" },
+        "pincode": { "type": "string" },
+        "email": { "type": "string" },
+        "specialty": { "type": "string" },
+        "tailoringSpeciality": { "type": "string" },
         "upiId": { "type": "string" },
-        "upiQrCodeUrl": { "type": "string" },
         "gpayPhonePeNumber": { "type": "string" },
-        "lastSyncedTimestamp": { "type": "string" }
+        "upiQrCodeUrl": { "type": "string" },
+        "googleMapUrl": { "type": "string" },
+        "authUid": { "type": "string" },
+        "authEmail": { "type": "string" },
+        "plan": { "type": "string" },
+        "planTier": { "type": "string" },
+        "status": { "type": "string" },
+        "termsAccepted": { "type": "boolean" },
+        "signupDate": { "type": "string" },
+        "registeredAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" }
       },
-      "required": ["shopName", "ownerName"]
+      "required": ["id", "shopName", "ownerName", "phoneNumber"]
+    },
+    "inventory": {
+      "title": "Boutique Inventory",
+      "description": "Garments, bridal wear, fabrics and boutique stock with gender, sizes, multi-photos, AI try-on models and pricing",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "gender": { "type": "string", "enum": ["Men", "Women", "Unisex", "Kids"] },
+        "category": { "type": "string" },
+        "sizes": { "type": "array" },
+        "quantity": { "type": "number" },
+        "unit": { "type": "string" },
+        "price": { "type": "number" },
+        "discountPercent": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "finalPrice": { "type": "number" },
+        "costPrice": { "type": "number" },
+        "sellingPrice": { "type": "number" },
+        "minStockAlert": { "type": "number" },
+        "minThreshold": { "type": "number" },
+        "photos": { "type": "array" },
+        "modelPhotos": { "type": "array" },
+        "selectedPhotos": { "type": "array" },
+        "hasTryOn": { "type": "boolean" },
+        "sku": { "type": "string" },
+        "location": { "type": "string" },
+        "supplier": { "type": "string" },
+        "supplierPhone": { "type": "string" },
+        "notes": { "type": "string" },
+        "boutiqueId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "lastUpdated": { "type": "string" }
+      },
+      "required": ["id", "name", "category", "quantity"]
+    },
+    "marketplace_products": {
+      "title": "Marketplace Products",
+      "description": "Boutique inventory catalogue for direct sales and reference designs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "price": { "type": "number" },
+        "description": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "stock": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "estimatedDays": { "type": "number" }
+      },
+      "required": ["id", "name", "category", "price"]
+    },
+    "catalogue_documents": {
+      "title": "Catalogue Documents",
+      "description": "Uploaded PDF, lookbooks, design catalogues for customer inspiration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "fileName": { "type": "string" },
+        "fileSize": { "type": "string" },
+        "uploadedDate": { "type": "string" },
+        "category": { "type": "string" },
+        "url": { "type": "string" }
+      },
+      "required": ["id", "title", "fileName"]
+    },
+    "appointments": {
+      "title": "Boutique Appointments",
+      "description": "Customer trial, fitting, consultation and custom measurement appointments",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "serviceType": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "status": { "type": "string" },
+        "notes": { "type": "string" },
+        "isMeasurementsDone": { "type": "boolean" },
+        "isFabricSubmitted": { "type": "boolean" },
+        "isTrialDone": { "type": "boolean" },
+        "isAdvancePaid": { "type": "boolean" },
+        "assignedTailor": { "type": "string" },
+        "estimatedDeliveryDate": { "type": "string" }
+      },
+      "required": ["id", "customerName", "customerPhone", "date", "time"]
+    },
+    "Subscription": {
+      "title": "Boutique Subscriptions",
+      "description": "Boutique subscription records, payment submissions, transaction IDs, admin confirmation statuses, and license validity",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "boutiqueId": { "type": "string" },
+        "shopId": { "type": "string" },
+        "shopName": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "plan": { "type": "string", "enum": ["monthly", "annual"] },
+        "planName": { "type": "string" },
+        "amount": { "type": "number" },
+        "currency": { "type": "string" },
+        "paymentId": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending_confirmation", "active", "rejected", "expired"] },
+        "submittedAt": { "type": "string" },
+        "confirmedAt": { "type": "string" },
+        "confirmedDays": { "type": "number" },
+        "startDate": { "type": "string" },
+        "expiryDate": { "type": "string" },
+        "rejectionReason": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "boutiqueId", "plan", "amount", "paymentId", "status"]
     }
   },
   "firestore": {
-    "tailor_orders": {
+    "Subscription/{subscriptionId}": {
+      "schema": "Subscription",
+      "description": "Master subscription and payment registry storing all subscription payment proofs and approval statuses"
+    },
+    "subscriptions/{subscriptionId}": {
+      "schema": "Subscription",
+      "description": "Canonical alias collection for boutique subscriptions"
+    },
+    "boutiques/{boutiqueId}": {
+      "schema": "boutiques",
+      "description": "Single consolidated boutique registry storing all boutique details, owner credentials, address, and config"
+    },
+    "orders/{orderId}": {
       "schema": "tailor_orders",
-      "description": "Master tailoring orders collection"
+      "description": "Primary orders collection holding master order records"
     },
-    "tailor_customers": {
-      "schema": "tailor_customers",
-      "description": "Customer profiles and measurements"
+    "stitch/{orderId}": {
+      "schema": "tailor_orders",
+      "description": "Direct partition collection for custom stitching orders"
     },
-    "tailor_staff": {
+    "alter/{orderId}": {
+      "schema": "tailor_orders",
+      "description": "Direct partition collection for alterations & fitting orders"
+    },
+    "sale/{orderId}": {
+      "schema": "tailor_orders",
+      "description": "Direct partition collection for direct retail garment sales"
+    },
+    "customers/{customerId}": {
+      "schema": "customers",
+      "description": "Unified master customer directory with saved measurements, contact details, and order history"
+    },
+    "tailor_staff/{staffId}": {
       "schema": "tailor_staff",
-      "description": "Staff tailors roster"
+      "description": "Staff tailors and karigar roster"
     },
-    "shop_profiles": {
-      "schema": "shop_profiles",
-      "description": "Shop profile and business configuration"
+    "appointments/{appointmentId}": {
+      "schema": "appointments",
+      "description": "Single consolidated customer appointments collection"
+    },
+    "inventory/{itemId}": {
+      "schema": "inventory",
+      "description": "Boutique raw materials and inventory collection"
+    },
+    "marketplace_products/{productId}": {
+      "schema": "marketplace_products",
+      "description": "Boutique showcase products catalogue"
+    },
+    "catalogue_documents/{docId}": {
+      "schema": "catalogue_documents",
+      "description": "Uploaded design catalogues and lookbooks"
     }
   }
 }

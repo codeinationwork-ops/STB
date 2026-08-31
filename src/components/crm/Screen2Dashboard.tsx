@@ -2,52 +2,37 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Plus,
   Search,
-  Bell,
   Clock,
-  CheckCircle,
   CheckCircle2,
   Scissors,
-  MessageSquare,
-  Volume2,
-  ChevronRight,
-  Phone,
-  AlertTriangle,
-  FileText,
-  UserCheck,
-  Calendar,
-  TrendingUp,
   DollarSign,
-  Wallet,
-  ArrowUpRight,
-  User,
-  Users,
-  Check,
-  X,
-  Send,
-  SlidersHorizontal,
-  ChevronDown,
-  Sparkles,
-  Calendar as CalendarIcon,
-  Zap,
-  Sun,
-  Moon,
-  Copy,
-  Camera,
-  ShoppingBag,
-  ExternalLink,
-  Image as ImageIcon,
-  MoreVertical,
-  Printer,
-  Edit,
-  Share2,
-  CheckCheck,
-  RotateCcw,
+  TrendingUp,
+  Package,
   Layers,
-  ArrowRight,
-  Mic,
+  ChevronRight,
+  Shirt,
   Play,
   Pause,
-  Headphones,
+  Filter,
+  Check,
+  X,
+  Sparkles,
+  Calendar,
+  AlertTriangle,
+  ArrowUpRight,
+  Phone,
+  MessageSquare,
+  Wallet,
+  ShoppingBag,
+  LayoutList,
+  Grid,
+  ChevronDown,
+  ChevronUp,
+  User,
+  Tag,
+  ArrowUpDown,
+  PhoneCall,
+  CheckCircle,
 } from 'lucide-react';
 import {
   TailorOrder,
@@ -56,34 +41,46 @@ import {
   RevenueAnalytics,
   ShopProfile,
   PaymentMode,
+  BoutiqueAppointment,
+  InventoryItem,
 } from '../../types';
 import {
   generateWorkerScheduleForDays,
   getEstimatedHoursForGarment,
 } from '../../lib/workerCapacity';
-import { OrderCompletedModal } from './OrderCompletedModal';
-import { OrderDeliveryModal } from './OrderDeliveryModal';
-import {
-  PromisedDateTimeInput,
-  formatDisplayDate,
-  formatDisplayTime,
-  formatFullReadableDate,
-} from './PromisedDateTimeInput';
-import { getWhatsAppUrl, clean10DigitPhone, formatDisplayPhone } from '../../lib/phoneUtils';
-import { BrandLogo } from './BrandLogo';
+import { formatDisplayDate } from './PromisedDateTimeInput';
+import { getWhatsAppUrl } from '../../lib/phoneUtils';
+import { useLanguage } from '../../lib/LanguageContext';
+import { roomDb } from '../../lib/localRoomDb';
+import { isDateToday, getLocalDateStr, normalizeDateStr } from '../../lib/dateUtils';
+
+// Boutique Subsystems
+import { BoutiqueNeedsAttentionQueue } from './BoutiqueNeedsAttentionQueue';
+import { BoutiqueAppointmentsSection } from './BoutiqueAppointmentsSection';
+import { BoutiqueFloatingQuickAction } from './BoutiqueFloatingQuickAction';
+import { BoutiqueSpeedNewModal } from './BoutiqueSpeedNewModal';
+import { BoutiqueAppointmentModal } from './BoutiqueAppointmentModal';
+import { BoutiqueQuickPaymentModal } from './BoutiqueQuickPaymentModal';
 
 interface Screen2DashboardProps {
   orders: TailorOrder[];
   tailors?: StaffTailor[];
   analytics?: RevenueAnalytics;
   shopProfile?: ShopProfile;
+  appointments?: BoutiqueAppointment[];
   onNewOrderClick: () => void;
+  onNewStitchClick?: () => void;
+  onNewAlterClick?: () => void;
+  onNewSaleClick?: () => void;
+  onNewAppointmentClick?: () => void;
   onSelectOrder: (order: TailorOrder) => void;
   onAssignTimelineClick: (order?: TailorOrder) => void;
   onProfileClick: () => void;
   onOverdueClick: () => void;
   onOrdersClick?: (tab?: 'all' | 'cutting' | 'stitching' | 'overdue' | 'completed' | 'archived') => void;
   onReportsClick?: () => void;
+  onMarketplaceClick?: () => void;
+  onCustomersClick?: () => void;
   onQuickAssignTailor?: (
     orderId: string,
     tailorName: string,
@@ -100,6 +97,16 @@ interface Screen2DashboardProps {
     notes?: string
   ) => void;
   onAddTailor?: (tailor: { name: string; phone: string; role: 'Master Tailor' | 'Cutting Master' | 'Stitching Karigar' | 'Helper / Finisher' }) => void;
+  onSaveAppointment?: (appt: BoutiqueAppointment) => void;
+  onDeleteAppointment?: (apptId: string) => void;
+  onToggleAppointmentChecklist?: (
+    apptId: string,
+    field: 'garmentReady' | 'accessoriesReady' | 'measurementsLoaded',
+    currentVal: boolean
+  ) => void;
+  onRecordQuickPayment?: (orderId: string, amount: number, mode: PaymentMode, note?: string) => void;
+  inventory?: InventoryItem[];
+  onInventoryClick?: () => void;
   userPhone?: string;
   isDesktopView?: boolean;
 }
@@ -109,78 +116,233 @@ export const Screen2Dashboard: React.FC<Screen2DashboardProps> = ({
   tailors = [],
   analytics,
   shopProfile,
+  appointments = [],
   onNewOrderClick,
+  onNewStitchClick,
+  onNewAlterClick,
+  onNewSaleClick,
+  onNewAppointmentClick,
   onSelectOrder,
   onAssignTimelineClick,
   onProfileClick,
   onOverdueClick,
   onOrdersClick,
   onReportsClick,
+  onMarketplaceClick,
+  onCustomersClick,
   onQuickAssignTailor,
   onUpdateOrderStatus,
   onDeliverOrder,
-  onAddTailor,
+  onSaveAppointment,
+  onDeleteAppointment,
+  onToggleAppointmentChecklist,
+  onRecordQuickPayment,
+  inventory,
+  onInventoryClick,
   userPhone = '+91 7608807790',
   isDesktopView = false,
 }) => {
-  const [activeTab, setActiveTab] = useState<'All' | 'Cutting' | 'Stitching' | 'Completed' | 'Alteration'>('All');
+  const { t, isHindi, isBengali, isOdia, language } = useLanguage();
+
+  // Navigation & filter states
+  const [activeTab, setActiveTab] = useState<'All' | 'Stitch' | 'Alteration' | 'Sale'>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSort, setSelectedSort] = useState<'latest' | 'due_earliest' | 'total_high' | 'balance_high'>('latest');
-  const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [selectedPaymentFilter, setSelectedPaymentFilter] = useState<'all' | 'paid' | 'due'>('all');
   const [selectedWorkerFilter, setSelectedWorkerFilter] = useState<string>('all');
-  
-  // Modals
+  const [statusStageFilter, setStatusStageFilter] = useState<'all' | 'in_progress' | 'ready' | 'delivered'>('all');
+  const [selectedDaysFilter, setSelectedDaysFilter] = useState<'all' | 'today' | '3days' | '7days' | '15days' | '30days'>('all');
+  const [limitCount, setLimitCount] = useState<number | 'all'>(5);
+  const [viewMode, setViewMode] = useState<'table' | 'grouped' | 'cards'>('table');
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+
+  const toggleGroupCollapse = (groupId: string) => {
+    setCollapsedGroups((prev) => ({
+      ...prev,
+      [groupId]: !prev[groupId],
+    }));
+  };
+
+  // Speed Action Modals
+  const [showSpeedNewModal, setShowSpeedNewModal] = useState(false);
+  const [showAppointmentModal, setShowAppointmentModal] = useState(false);
+  const [selectedAppointmentForEdit, setSelectedAppointmentForEdit] = useState<BoutiqueAppointment | null>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [preselectedPaymentOrder, setPreselectedPaymentOrder] = useState<TailorOrder | null>(null);
+
+  // Assignment Modal State
   const [assigningOrder, setAssigningOrder] = useState<TailorOrder | null>(null);
   const [selectedKarigar, setSelectedKarigar] = useState<string>('');
   const [assignEstHours, setAssignEstHours] = useState<number>(4);
   const [assignDueDate, setAssignDueDate] = useState<string>('');
   const [assignDueTime, setAssignDueTime] = useState<string>('18:00');
-  
-  const [completedModalOrder, setCompletedModalOrder] = useState<TailorOrder | null>(null);
-  const [deliveryModalOrder, setDeliveryModalOrder] = useState<TailorOrder | null>(null);
-  const [receiptModalOrder, setReceiptModalOrder] = useState<TailorOrder | null>(null);
-  const [slipModalOrder, setSlipModalOrder] = useState<TailorOrder | null>(null);
-  const [expandedPhotoUrl, setExpandedPhotoUrl] = useState<string | null>(null);
-  const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
-  const [openCardMenuId, setOpenCardMenuId] = useState<string | null>(null);
-  
-  // Voice Note Playback State for Cards
+
+  // Voice Note Playback State
   const [playingVoiceOrderId, setPlayingVoiceOrderId] = useState<string | null>(null);
   const audioPlaybackRef = useRef<HTMLAudioElement | null>(null);
 
-  // Add Worker Modal
-  const [showAddWorkerModal, setShowAddWorkerModal] = useState(false);
-  const [newWorkerName, setNewWorkerName] = useState('');
-  const [newWorkerPhone, setNewWorkerPhone] = useState('');
-  const [newWorkerRole, setNewWorkerRole] = useState<'Master Tailor' | 'Cutting Master' | 'Stitching Karigar' | 'Helper / Finisher'>('Stitching Karigar');
+  // Quick Status Actions
+  const handleQuickMarkReady = async (ord: TailorOrder, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await roomDb.updateOrderStatus(ord.id, 'Completed');
+      if (onUpdateOrderStatus) {
+        onUpdateOrderStatus(ord.id, 'Completed');
+      }
+    } catch (err) {
+      console.error('Failed to mark order as Ready:', err);
+    }
+  };
 
-  // Active vs. Archived Orders
+  const handleQuickMarkDelivered = async (ord: TailorOrder, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await roomDb.updateOrderStatus(ord.id, 'Delivered');
+      if (onUpdateOrderStatus) {
+        onUpdateOrderStatus(ord.id, 'Delivered');
+      }
+    } catch (err) {
+      console.error('Failed to mark order as Delivered:', err);
+    }
+  };
+  // Active Orders (Excluding Archived)
   const activeOrders = useMemo(() => orders.filter((o) => !o.isArchived), [orders]);
   const overdueOrders = useMemo(() => activeOrders.filter((o) => o.isOverdue), [activeOrders]);
   const overdueCount = overdueOrders.length;
-  
-  const cuttingCount = useMemo(() => activeOrders.filter((o) => o.status === 'New / Cutting').length, [activeOrders]);
-  const stitchingCount = useMemo(() => activeOrders.filter((o) => o.status === 'Stitching in Progress' || o.status === 'Trial' || o.status === 'Assigned').length, [activeOrders]);
-  const completedCount = useMemo(() => activeOrders.filter((o) => o.status === 'Completed' || o.status === 'Delivered').length, [activeOrders]);
-  const alterationCount = useMemo(() => activeOrders.filter((o) => o.orderCategory === 'Alteration' || o.orderCategory === 'Repair' || (o.garmentType && o.garmentType.toLowerCase().includes('alter'))).length, [activeOrders]);
 
-  // Unassigned Orders
-  const unassignedOrders = useMemo(
-    () => activeOrders.filter((o) => !o.assignedTailor || o.assignedTailor === '' || o.assignedTailor === 'Unassigned' || o.assignedTailor === 'Not Assigned'),
+  const todayStr = useMemo(() => getLocalDateStr(), []);
+
+  const isTodayDate = (dateVal?: any): boolean => {
+    return isDateToday(dateVal);
+  };
+
+  const dueTodayOrders = useMemo(() => activeOrders.filter((o) => isTodayDate(o.dueDate)), [activeOrders]);
+
+  // Daily Sales & Bookings (Orders created, booked, or updated today)
+  const todayBookedOrders = useMemo(() => {
+    return activeOrders.filter(
+      (o) =>
+        isTodayDate(o.createdAt) ||
+        isTodayDate(o.createdDate) ||
+        isTodayDate((o as any).orderDate) ||
+        isTodayDate(o.updatedAt)
+    );
+  }, [activeOrders]);
+
+  const todayBookedValue = useMemo(() => {
+    return todayBookedOrders.reduce((sum, o) => sum + (Number(o.totalAmount) || 0), 0);
+  }, [todayBookedOrders]);
+
+  // Today's total cash collected (advances from orders booked today + direct retail sale receipts + settlements logged today)
+  const todayCollectedAmount = useMemo(() => {
+    let sum = 0;
+    for (const o of activeOrders) {
+      const isCreatedToday = isTodayDate(o.createdAt) || isTodayDate(o.createdDate) || isTodayDate((o as any).orderDate);
+      if (isCreatedToday) {
+        // If it's a retail sale or fully paid order, count the paid portion
+        if (o.category === 'Sale' || o.status === 'Completed' || o.status === 'Delivered') {
+          const paid = Math.max(Number(o.advancePaid) || 0, (Number(o.totalAmount) || 0) - (Number(o.balanceDue) || 0));
+          sum += paid;
+        } else {
+          sum += Number(o.advancePaid) || 0;
+        }
+      }
+      if (o.paymentHistory && Array.isArray(o.paymentHistory)) {
+        for (const p of o.paymentHistory) {
+          if (isTodayDate(p.date) && !isCreatedToday) {
+            sum += Number(p.amount) || 0;
+          }
+        }
+      }
+    }
+    return sum;
+  }, [activeOrders]);
+
+  // Orders Delivered Today & Value
+  const deliveredTodayOrders = useMemo(() => {
+    return activeOrders.filter((o) => {
+      return o.status === 'Delivered' && (isTodayDate((o as any).deliveredDate) || isTodayDate(o.updatedAt) || isTodayDate(o.createdDate));
+    });
+  }, [activeOrders]);
+
+  const deliveredTodayValue = useMemo(() => {
+    return deliveredTodayOrders.reduce((sum, o) => sum + (Number(o.totalAmount) || 0), 0);
+  }, [deliveredTodayOrders]);
+
+  // Financial figures
+  const totalRevenue = useMemo(() => activeOrders.reduce((sum, o) => sum + (Number(o.totalAmount) || 0), 0), [activeOrders]);
+  const totalAdvanceCollected = useMemo(() => activeOrders.reduce((sum, o) => sum + (Number(o.advancePaid) || 0), 0), [activeOrders]);
+  const totalBalanceDue = useMemo(() => activeOrders.reduce((sum, o) => sum + (Number(o.balanceDue) || 0), 0), [activeOrders]);
+
+  // Total Realized Cash Inflow (Advances + settled balance on delivered/completed)
+  const totalEarnedCash = useMemo(() => {
+    return activeOrders.reduce((sum, o) => {
+      const adv = Number(o.advancePaid) || 0;
+      const total = Number(o.totalAmount) || 0;
+      const bal = Number(o.balanceDue) || 0;
+      const settled = Math.max(adv, total - bal);
+      return sum + settled;
+    }, 0);
+  }, [activeOrders]);
+
+  const collectionRate = useMemo(() => {
+    if (totalRevenue <= 0) return 100;
+    return Math.min(100, Math.round((totalEarnedCash / totalRevenue) * 100));
+  }, [totalEarnedCash, totalRevenue]);
+
+  const balanceOnReady = useMemo(
+    () => activeOrders.filter((o) => o.status === 'Completed' || o.status === 'Trial').reduce((sum, o) => sum + (Number(o.balanceDue) || 0), 0),
     [activeOrders]
   );
 
-  // Financial & Revenue Aggregations
-  const totalRevenue = useMemo(() => activeOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0), [activeOrders]);
-  const totalAdvanceCollected = useMemo(() => activeOrders.reduce((sum, o) => sum + (o.advancePaid || 0), 0), [activeOrders]);
-  const totalBalanceDue = useMemo(() => activeOrders.reduce((sum, o) => sum + (o.balanceDue || 0), 0), [activeOrders]);
-  const collectedPercentage = totalRevenue > 0 ? Math.round((totalAdvanceCollected / totalRevenue) * 100) : 0;
+  // Live Inventory Stock & Valuation metrics
+  const inventoryList = useMemo(() => {
+    return (inventory && inventory.length > 0) ? inventory : roomDb.getInventory();
+  }, [inventory]);
+
+  const inventoryMetrics = useMemo(() => {
+    let totalUnits = 0;
+    let totalValuation = 0;
+    let totalRetail = 0;
+    let lowStockCount = 0;
+
+    inventoryList.forEach((item) => {
+      const qty = Number(item.quantity) || 0;
+      const cost = Number(item.costPrice) || (item.finalPrice ? Number(item.finalPrice) * 0.6 : (Number(item.price) || 0) * 0.5);
+      const sell = Number(item.finalPrice) || Number(item.sellingPrice) || Number(item.price) || 0;
+
+      totalUnits += qty;
+      totalValuation += qty * cost;
+      totalRetail += qty * sell;
+
+      if (qty > 0 && qty <= (item.minStockAlert || 3)) {
+        lowStockCount++;
+      }
+    });
+
+    return {
+      totalUnits,
+      totalValuation,
+      totalRetail,
+      lowStockCount,
+      itemCount: inventoryList.length,
+    };
+  }, [inventoryList]);
+
+  const readyCount = useMemo(() => activeOrders.filter((o) => o.status === 'Completed').length, [activeOrders]);
+  const inProgressCount = useMemo(
+    () => activeOrders.filter((o) => o.status !== 'Completed' && o.status !== 'Delivered').length,
+    [activeOrders]
+  );
+  const deliveredCount = useMemo(
+    () => activeOrders.filter((o) => o.status === 'Delivered').length,
+    [activeOrders]
+  );
 
   // Staff list
   const staffList = useMemo(() => {
     const list = [...(tailors || [])];
-    if (!list.some((s) => s.role === 'Owner' || s.name === 'Self (Owner)' || s.name.includes('Owner'))) {
+    if (!list.some((s) => s.role === 'Owner' || s.name === 'Self (Owner)' || (s.name && s.name.includes('Owner')))) {
       list.unshift({
         id: 'tailor-owner',
         name: 'Self (Owner)',
@@ -192,46 +354,45 @@ export const Screen2Dashboard: React.FC<Screen2DashboardProps> = ({
     }
     const mockNames = new Set(['master ramesh', 'rafiq bhai', 'suresh kumar', 'mohan lal']);
     const mockIds = new Set(['tailor-1', 'tailor-2', 'tailor-3', 'tailor-4', 't1', 't2', 't3', 't4']);
-    return list.filter((s) => !mockNames.has(s.name.toLowerCase()) && !mockIds.has(s.id));
+    return list.filter((s) => !mockNames.has((s.name || '').toLowerCase()) && !mockIds.has(s.id));
   }, [tailors]);
 
-  // Selected karigar schedule
-  const selectedKarigarSchedule = useMemo(() => {
-    const targetWorker = selectedKarigar || staffList[0]?.name || 'Self (Owner)';
-    return generateWorkerScheduleForDays(targetWorker, activeOrders, 8);
-  }, [selectedKarigar, staffList, activeOrders]);
-
-  const recommendedSlot = useMemo(() => {
-    if (!selectedKarigarSchedule || selectedKarigarSchedule.length === 0) return null;
-    const match = selectedKarigarSchedule.find((s) => !s.isDayOff && s.freeHours >= assignEstHours);
-    return match || selectedKarigarSchedule.find((s) => !s.isDayOff && s.freeHours > 0) || selectedKarigarSchedule[0];
-  }, [selectedKarigarSchedule, assignEstHours]);
-
-  // Filter & Sort Logic
+  // Filter & Sort Logic for Orders Workspace
   const filteredOrders = useMemo(() => {
     let result = activeOrders.filter((o) => {
-      // Tab filter
+      // Stage filter
+      let matchesStage = true;
+      if (statusStageFilter === 'in_progress') {
+        matchesStage = o.status !== 'Completed' && o.status !== 'Delivered';
+      } else if (statusStageFilter === 'ready') {
+        matchesStage = o.status === 'Completed';
+      } else if (statusStageFilter === 'delivered') {
+        matchesStage = o.status === 'Delivered';
+      }
+
+      // Tab filter (Stitch, Alteration, Sale)
       let matchesTab = true;
-      if (activeTab === 'Cutting') {
-        matchesTab = o.status === 'New / Cutting';
-      } else if (activeTab === 'Stitching') {
-        matchesTab = o.status === 'Stitching in Progress' || o.status === 'Trial' || o.status === 'Assigned';
-      } else if (activeTab === 'Completed') {
-        matchesTab = o.status === 'Completed' || o.status === 'Delivered';
+      if (activeTab === 'Stitch') {
+        matchesTab = o.orderCategory === 'Stitch' || o.orderCategory === 'New Stitch' || !o.orderCategory;
       } else if (activeTab === 'Alteration') {
-        matchesTab = o.orderCategory === 'Alteration' || o.orderCategory === 'Repair' || (o.garmentType && o.garmentType.toLowerCase().includes('alter'));
+        matchesTab =
+          o.orderCategory === 'Alteration' ||
+          o.orderCategory === 'Repair' ||
+          Boolean(o.garmentType && typeof o.garmentType === 'string' && o.garmentType.toLowerCase().includes('alter'));
+      } else if (activeTab === 'Sale') {
+        matchesTab = o.orderCategory === 'Sale';
       }
 
       // Search Query
-      const q = searchQuery.toLowerCase();
+      const q = (searchQuery || '').toLowerCase();
       const matchesSearch =
         !q ||
-        o.customerName.toLowerCase().includes(q) ||
-        o.customerPhone.includes(q) ||
-        o.id.toLowerCase().includes(q) ||
-        o.garmentType.toLowerCase().includes(q) ||
-        (o.assignedTailor && o.assignedTailor.toLowerCase().includes(q)) ||
-        (o.orderCategory && o.orderCategory.toLowerCase().includes(q));
+        Boolean(o.customerName && typeof o.customerName === 'string' && o.customerName.toLowerCase().includes(q)) ||
+        Boolean(o.customerPhone && typeof o.customerPhone === 'string' && o.customerPhone.includes(q)) ||
+        Boolean(o.id && typeof o.id === 'string' && o.id.toLowerCase().includes(q)) ||
+        Boolean(o.garmentType && typeof o.garmentType === 'string' && o.garmentType.toLowerCase().includes(q)) ||
+        Boolean(o.assignedTailor && typeof o.assignedTailor === 'string' && o.assignedTailor.toLowerCase().includes(q)) ||
+        Boolean(o.orderCategory && typeof o.orderCategory === 'string' && o.orderCategory.toLowerCase().includes(q));
 
       // Payment filter
       let matchesPayment = true;
@@ -247,13 +408,62 @@ export const Screen2Dashboard: React.FC<Screen2DashboardProps> = ({
         matchesWorker = o.assignedTailor === selectedWorkerFilter;
       }
 
-      return matchesTab && matchesSearch && matchesPayment && matchesWorker;
+      // Days Filter (Date Created / Due Range)
+      let matchesDays = true;
+      if (selectedDaysFilter !== 'all') {
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const orderDateStr = o.createdAt || o.dueDate;
+        if (orderDateStr) {
+          const orderTime = new Date(orderDateStr).getTime();
+          if (selectedDaysFilter === 'today') {
+            matchesDays = orderTime >= startOfToday;
+          } else if (selectedDaysFilter === '3days') {
+            matchesDays = orderTime >= startOfToday - 3 * 24 * 60 * 60 * 1000;
+          } else if (selectedDaysFilter === '7days') {
+            matchesDays = orderTime >= startOfToday - 7 * 24 * 60 * 60 * 1000;
+          } else if (selectedDaysFilter === '15days') {
+            matchesDays = orderTime >= startOfToday - 15 * 24 * 60 * 60 * 1000;
+          } else if (selectedDaysFilter === '30days') {
+            matchesDays = orderTime >= startOfToday - 30 * 24 * 60 * 60 * 1000;
+          }
+        }
+      }
+
+      return matchesStage && matchesTab && matchesSearch && matchesPayment && matchesWorker && matchesDays;
     });
 
-    // Sorting
+    // Robust helper to extract numerical timestamp for sorting latest order first
+    const getOrderTimestamp = (order: TailorOrder): number => {
+      if ((order as any).createdAt) {
+        const t = new Date((order as any).createdAt).getTime();
+        if (!isNaN(t) && t > 0) return t;
+      }
+      if (order.createdDate) {
+        const dateTimeStr = order.createdTime ? `${order.createdDate}T${order.createdTime}` : order.createdDate;
+        const t = new Date(dateTimeStr).getTime();
+        if (!isNaN(t) && t > 0) return t;
+      }
+      if (order.updatedAt) {
+        const t = new Date(order.updatedAt).getTime();
+        if (!isNaN(t) && t > 0) return t;
+      }
+      if (order.id) {
+        const match = order.id.match(/\d+/g);
+        if (match) {
+          const num = parseInt(match.join(''), 10);
+          if (!isNaN(num)) return num;
+        }
+      }
+      return 0;
+    };
+
+    // Sorting: default to newest / latest created order first
     result.sort((a, b) => {
       if (selectedSort === 'latest') {
-        return new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime();
+        const timeDiff = getOrderTimestamp(b) - getOrderTimestamp(a);
+        if (timeDiff !== 0) return timeDiff;
+        return (b.id || '').localeCompare(a.id || '');
       } else if (selectedSort === 'due_earliest') {
         return new Date(a.dueDate || '').getTime() - new Date(b.dueDate || '').getTime();
       } else if (selectedSort === 'total_high') {
@@ -265,7 +475,13 @@ export const Screen2Dashboard: React.FC<Screen2DashboardProps> = ({
     });
 
     return result;
-  }, [activeOrders, activeTab, searchQuery, selectedPaymentFilter, selectedWorkerFilter, selectedSort]);
+  }, [activeOrders, statusStageFilter, activeTab, searchQuery, selectedPaymentFilter, selectedWorkerFilter, selectedDaysFilter, selectedSort]);
+
+  // Displayed orders considering limitCount (e.g. latest 5 orders by default)
+  const displayedOrders = useMemo(() => {
+    if (limitCount === 'all') return filteredOrders;
+    return filteredOrders.slice(0, limitCount);
+  }, [filteredOrders, limitCount]);
 
   const handleOpenAssignModal = (order: TailorOrder) => {
     setAssigningOrder(order);
@@ -276,7 +492,7 @@ export const Screen2Dashboard: React.FC<Screen2DashboardProps> = ({
     setSelectedKarigar(initialKarigar);
     const est = order.estimatedHours || getEstimatedHoursForGarment(order.garmentType, order.orderCategory);
     setAssignEstHours(est);
-    
+
     const sched = generateWorkerScheduleForDays(initialKarigar, activeOrders, 8);
     const best = sched.find((s) => !s.isDayOff && s.freeHours >= est) || sched.find((s) => !s.isDayOff) || sched[0];
     const initialDate = order.dueDate || (best ? best.dateStr : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
@@ -295,55 +511,48 @@ export const Screen2Dashboard: React.FC<Screen2DashboardProps> = ({
         assignDueTime
       );
     }
-    const todayStr = new Date().toISOString().split('T')[0];
-    const nextStatus: OrderStatus = assignDueDate === todayStr ? 'Stitching in Progress' : 'Assigned';
+    const todayStrNow = new Date().toISOString().split('T')[0];
+    const nextStatus: OrderStatus = assignDueDate === todayStrNow ? 'Stitching in Progress' : 'Assigned';
     if (onUpdateOrderStatus) {
       onUpdateOrderStatus(assigningOrder.id, nextStatus);
     }
     setAssigningOrder(null);
   };
 
-  const handleCardStatusChangeRequest = (order: TailorOrder, targetStatus: OrderStatus) => {
-    if (targetStatus === 'Assigned') {
-      handleOpenAssignModal(order);
-    } else if (targetStatus === 'Completed') {
-      setCompletedModalOrder(order);
-    } else if (targetStatus === 'Delivered') {
-      setDeliveryModalOrder(order);
-    } else {
-      if (onUpdateOrderStatus) {
-        onUpdateOrderStatus(order.id, targetStatus);
-      }
-    }
-  };
-
-  const handleConfirmDeliverySettlement = (
-    orderId: string,
-    balancePaid: number,
-    paymentMode: PaymentMode,
-    stitchedPhotos: string[],
-    notes?: string
+  const handleSpeedActionSelect = (
+    action:
+      | 'custom_order'
+      | 'alteration'
+      | 'quick_sale'
+      | 'book_appointment'
+      | 'new_customer'
+      | 'record_payment'
+      | 'catalogue_upload'
   ) => {
-    if (onDeliverOrder) {
-      onDeliverOrder(orderId, balancePaid, paymentMode, stitchedPhotos, notes);
-    } else if (onUpdateOrderStatus) {
-      onUpdateOrderStatus(orderId, 'Delivered');
+    if (action === 'custom_order') {
+      if (onNewStitchClick) onNewStitchClick();
+      else onNewOrderClick();
+    } else if (action === 'alteration') {
+      if (onNewAlterClick) onNewAlterClick();
+      else onNewOrderClick();
+    } else if (action === 'quick_sale') {
+      if (onNewSaleClick) onNewSaleClick();
+      else onNewOrderClick();
+    } else if (action === 'book_appointment') {
+      if (onNewAppointmentClick) onNewAppointmentClick();
+      else {
+        setSelectedAppointmentForEdit(null);
+        setShowAppointmentModal(true);
+      }
+    } else if (action === 'new_customer') {
+      if (onCustomersClick) onCustomersClick();
+      else onNewOrderClick();
+    } else if (action === 'record_payment') {
+      setPreselectedPaymentOrder(null);
+      setShowPaymentModal(true);
+    } else if (action === 'catalogue_upload') {
+      if (onMarketplaceClick) onMarketplaceClick();
     }
-    setDeliveryModalOrder(null);
-  };
-
-  const handleConfirmCompleted = (orderId: string) => {
-    if (onUpdateOrderStatus) {
-      onUpdateOrderStatus(orderId, 'Completed');
-    }
-    setCompletedModalOrder(null);
-  };
-
-  const handleCopyOrderId = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    navigator.clipboard.writeText(id);
-    setCopiedOrderId(id);
-    setTimeout(() => setCopiedOrderId(null), 2000);
   };
 
   const handleToggleVoicePlay = (order: TailorOrder, e: React.MouseEvent) => {
@@ -364,7 +573,7 @@ export const Screen2Dashboard: React.FC<Screen2DashboardProps> = ({
       audioPlaybackRef.current = audio;
       setPlayingVoiceOrderId(order.id);
       audio.play().catch((err) => {
-        console.warn('Audio playback not allowed or failed:', err);
+        console.warn('Audio playback notice:', err);
       });
       audio.onended = () => {
         setPlayingVoiceOrderId(null);
@@ -386,1239 +595,1044 @@ export const Screen2Dashboard: React.FC<Screen2DashboardProps> = ({
     };
   }, []);
 
-  const handleCreateWorker = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newWorkerName.trim()) return;
-    if (onAddTailor) {
-      onAddTailor({
-        name: newWorkerName.trim(),
-        phone: newWorkerPhone.trim(),
-        role: newWorkerRole,
-      });
-    }
-    setNewWorkerName('');
-    setNewWorkerPhone('');
-    setShowAddWorkerModal(false);
-  };
-
-  // Helper for Stepper Stage Index
-  const getStageIndex = (status: OrderStatus) => {
-    switch (status) {
-      case 'New / Cutting':
-        return 0;
-      case 'Assigned':
-        return 1;
-      case 'Stitching in Progress':
-      case 'Trial':
-        return 2;
-      case 'Completed':
-        return 3;
-      case 'Delivered':
-        return 4;
-      default:
-        return 0;
-    }
-  };
-
   return (
-    <div className="space-y-5 font-sans">
-      
-      {/* ================= SECTION 1: SHOP REVENUE & CASHFLOW ================= */}
-      <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-xs space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center border border-emerald-200 shadow-2xs">
-              <TrendingUp className="w-4 h-4 text-emerald-700" />
-            </div>
+    <div className="space-y-6 font-sans animate-fadeIn">
+      {/* ================= SECTION 1: INFORMATIVE FINANCIAL & OPERATIONAL KPI TILES ================= */}
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* 1. Daily Sales & Today's Cash Inflow */}
+        <div
+          onClick={onReportsClick}
+          className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 border-l-4 border-l-[#0B4636] shadow-2xs hover:shadow-xs transition-all cursor-pointer group flex flex-col justify-between"
+        >
+          <div className="flex items-center justify-between text-slate-600 mb-1.5">
             <div>
-              <h2 className="text-xs font-black tracking-wider uppercase text-slate-900">Shop Revenue & Cashflow</h2>
-              <p className="text-[11px] text-slate-400 font-medium">Live active ledger summary</p>
+              <span className="text-xs font-bold text-slate-900 group-hover:text-[#0B4636] transition-colors block">
+                {t('stats.dailySales', 'Daily Sales (Today)')}
+              </span>
+              <span className="text-[10px] text-slate-500 font-medium">
+                {t('stats.dailyInflow', 'Cash & UPI Inflow')}
+              </span>
+            </div>
+            <div className="w-7 h-7 rounded-lg bg-emerald-50 text-[#0B4636] flex items-center justify-center font-bold shrink-0 border border-emerald-200">
+              <TrendingUp className="w-4 h-4 stroke-[2.5]" />
             </div>
           </div>
-
-          {onReportsClick && (
-            <button
-              onClick={onReportsClick}
-              className="text-xs font-black text-slate-700 hover:text-slate-950 bg-white hover:bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-            >
-              <span>Full Reports</span>
-              <ArrowUpRight className="w-3.5 h-3.5 text-slate-500" />
-            </button>
-          )}
+          <div className="pt-0.5">
+            <div className="text-xl sm:text-2xl font-bold text-slate-950 font-mono tracking-tight">
+              ₹{(todayBookedValue > 0 ? todayBookedValue : todayCollectedAmount).toLocaleString('en-IN')}
+            </div>
+            <div className="text-[11px] text-[#0B4636] font-semibold mt-0.5 truncate">
+              {todayBookedOrders.length > 0
+                ? `${todayBookedOrders.length} ${todayBookedOrders.length === 1 ? 'order' : 'orders'} • ₹${todayCollectedAmount.toLocaleString('en-IN')} cash collected`
+                : todayCollectedAmount > 0
+                ? `₹${todayCollectedAmount.toLocaleString('en-IN')} collected today`
+                : `₹${totalAdvanceCollected.toLocaleString('en-IN')} active advances`}
+            </div>
+          </div>
         </div>
 
-        {/* 4 KPI Cards Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          
-          {/* 1. Total Booked */}
-          <div className="bg-[#F8FAFC] rounded-xl p-3.5 border border-slate-200/80 flex items-center justify-between">
-            <div className="space-y-0.5">
-              <div className="text-xs font-semibold text-slate-500">Total Booked</div>
-              <div className="text-2xl font-black text-slate-900">₹{totalRevenue.toLocaleString()}</div>
-              <div className="text-[11px] text-slate-500 font-medium">{activeOrders.length} active orders</div>
+        {/* 2. Sales Delivered Today & Handovers */}
+        <div
+          onClick={() => {
+            setActiveTab('All');
+            if (onOrdersClick) onOrdersClick('all');
+          }}
+          className={`p-3.5 sm:p-4 rounded-xl border border-slate-200 border-l-4 ${
+            dueTodayOrders.length > 0 || overdueCount > 0 ? 'border-l-rose-500' : 'border-l-slate-900'
+          } shadow-2xs hover:shadow-xs transition-all cursor-pointer group flex flex-col justify-between bg-white`}
+        >
+          <div className="flex items-center justify-between text-slate-600 mb-1.5">
+            <div>
+              <span className="text-xs font-bold text-slate-950 block">
+                {t('stats.salesDeliveredToday', 'Delivered Today')}
+              </span>
+              <span className="text-[10px] text-slate-500 font-medium">
+                {t('stats.salesDeliveredSub', 'Garments Handed Over')}
+              </span>
             </div>
-            {/* Sparkline SVG */}
-            <div className="w-16 h-8 flex items-center justify-end">
-              <svg className="w-14 h-7 stroke-emerald-500 fill-none" viewBox="0 0 60 30">
-                <path d="M0 25 Q 15 22, 25 15 T 45 10 T 60 3" strokeWidth="2.5" strokeLinecap="round" />
-                <path d="M0 25 Q 15 22, 25 15 T 45 10 T 60 3 L 60 30 L 0 30 Z" className="fill-emerald-50 opacity-40" />
-              </svg>
-            </div>
-          </div>
-
-          {/* 2. Advance Collected */}
-          <div className="bg-[#F8FAFC] rounded-xl p-3.5 border border-slate-200/80 flex items-center justify-between">
-            <div className="space-y-0.5">
-              <div className="text-xs font-semibold text-slate-500">Advance Collected</div>
-              <div className="text-2xl font-black text-slate-900">₹{totalAdvanceCollected.toLocaleString()}</div>
-              <div className="text-[11px] text-emerald-600 font-bold">{collectedPercentage}% recovered</div>
-            </div>
-            {/* Sparkline SVG */}
-            <div className="w-16 h-8 flex items-center justify-end">
-              <svg className="w-14 h-7 stroke-emerald-600 fill-none" viewBox="0 0 60 30">
-                <path d="M0 20 Q 20 25, 30 12 T 50 8 T 60 2" strokeWidth="2.5" strokeLinecap="round" />
-                <path d="M0 20 Q 20 25, 30 12 T 50 8 T 60 2 L 60 30 L 0 30 Z" className="fill-emerald-100 opacity-40" />
-              </svg>
+            <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-900 flex items-center justify-center font-bold shrink-0 border border-slate-200">
+              <ShoppingBag className="w-4 h-4 stroke-[2.5]" />
             </div>
           </div>
-
-          {/* 3. Pending Balance */}
-          <div className="bg-[#F8FAFC] rounded-xl p-3.5 border border-slate-200/80 flex items-center justify-between">
-            <div className="space-y-0.5">
-              <div className="text-xs font-semibold text-slate-500">Pending Balance</div>
-              <div className="text-2xl font-black text-rose-600">₹{totalBalanceDue.toLocaleString()}</div>
-              <div className="text-[11px] text-slate-500 font-medium">To collect on delivery</div>
+          <div className="pt-0.5">
+            <div className="text-xl sm:text-2xl font-bold font-mono tracking-tight text-slate-950">
+              {deliveredTodayOrders.length > 0 ? deliveredTodayOrders.length : readyCount}
             </div>
-            {/* Sparkline SVG */}
-            <div className="w-16 h-8 flex items-center justify-end">
-              <svg className="w-14 h-7 stroke-rose-500 fill-none" viewBox="0 0 60 30">
-                <path d="M0 8 Q 20 5, 35 18 T 50 22 T 60 26" strokeWidth="2.5" strokeLinecap="round" />
-                <path d="M0 8 Q 20 5, 35 18 T 50 22 T 60 26 L 60 30 L 0 30 Z" className="fill-rose-50 opacity-40" />
-              </svg>
+            <div className="text-[11px] font-semibold mt-0.5 truncate">
+              {deliveredTodayOrders.length > 0 ? (
+                <span className="text-emerald-700 font-bold">
+                  ₹{deliveredTodayValue.toLocaleString('en-IN')} settled today
+                </span>
+              ) : overdueCount > 0 ? (
+                <span className="text-rose-600 font-bold">
+                  🚨 {overdueCount} {t('stats.overdueNotice', 'overdue orders')}
+                </span>
+              ) : (
+                <span className="text-slate-600">
+                  {readyCount > 0 ? `${readyCount} ready for pickup` : t('stats.onTrack', 'All deliveries on track')}
+                </span>
+              )}
             </div>
           </div>
+        </div>
 
-          {/* 4. Collection Health */}
-          <div className="bg-[#F8FAFC] rounded-xl p-3.5 border border-slate-200/80 flex items-center gap-3">
-            {/* Circular Gauge Ring */}
-            <div className="relative w-12 h-12 shrink-0 flex items-center justify-center">
-              <svg className="w-12 h-12 -rotate-90" viewBox="0 0 36 36">
-                <path
-                  className="text-slate-200"
-                  strokeWidth="3.5"
-                  stroke="currentColor"
-                  fill="none"
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                />
-                <path
-                  className="text-emerald-500 transition-all duration-700"
-                  strokeDasharray={`${collectedPercentage}, 100`}
-                  strokeWidth="3.5"
-                  strokeLinecap="round"
-                  stroke="currentColor"
-                  fill="none"
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                />
-              </svg>
-              <span className="absolute text-[11px] font-black text-slate-800">{collectedPercentage}%</span>
+        {/* 3. Inventory Value & Live Stock Units */}
+        <div
+          onClick={onInventoryClick ? onInventoryClick : undefined}
+          className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 border-l-4 border-l-[#0B4636] shadow-2xs hover:shadow-xs transition-all cursor-pointer group flex flex-col justify-between"
+        >
+          <div className="flex items-center justify-between text-slate-600 mb-1.5">
+            <div>
+              <span className="text-xs font-bold text-slate-900 group-hover:text-[#0B4636] transition-colors block">
+                {t('stats.inventoryValuation', 'Inventory Value')}
+              </span>
+              <span className="text-[10px] text-slate-500 font-medium">
+                {t('stats.inventoryStockSub', 'Ready Stock & Pieces')}
+              </span>
             </div>
+            <div className="w-7 h-7 rounded-lg bg-emerald-50 text-[#0B4636] flex items-center justify-center font-bold shrink-0 border border-emerald-200">
+              <Package className="w-4 h-4 stroke-[2.5]" />
+            </div>
+          </div>
+          <div className="pt-0.5">
+            <div className="text-xl sm:text-2xl font-bold text-slate-900 font-mono tracking-tight">
+              ₹{inventoryMetrics.totalValuation.toLocaleString('en-IN')}
+            </div>
+            <div className="text-[11px] text-slate-600 font-medium mt-0.5 truncate">
+              <span className="text-[#0B4636] font-semibold">
+                {inventoryMetrics.totalUnits} {t('stats.stockUnits', 'pieces in stock')}
+              </span>
+              {inventoryMetrics.totalRetail > 0 && (
+                <span className="text-slate-500 ml-1">
+                  • ₹{inventoryMetrics.totalRetail.toLocaleString('en-IN')} {t('stats.retailPotential', 'retail')}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
 
-            <div className="space-y-1 min-w-0 flex-1">
-              <div className="text-xs font-semibold text-slate-500 truncate">Collection Health</div>
-              <div className="text-xs font-black text-slate-900 truncate">Cash In-Hand</div>
-              <div className="text-[10px] text-emerald-700 font-bold flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                <span>Good progress</span>
-              </div>
+        {/* 4. Total Realized Revenue */}
+        <div
+          onClick={onReportsClick}
+          className="bg-white p-3.5 sm:p-4 rounded-xl border border-slate-200 border-l-4 border-l-slate-900 shadow-2xs hover:shadow-xs transition-all cursor-pointer group flex flex-col justify-between"
+        >
+          <div className="flex items-center justify-between text-slate-600 mb-1.5">
+            <div>
+              <span className="text-xs font-bold text-slate-900 group-hover:text-slate-700 transition-colors block">
+                {t('stats.totalEarned', 'Total Realized Revenue')}
+              </span>
+              <span className="text-[10px] text-slate-500 font-medium">
+                {t('stats.totalEarnedSub', 'Net Inflow / Realized')}
+              </span>
+            </div>
+            <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-900 flex items-center justify-center font-bold shrink-0 border border-slate-200">
+              <Sparkles className="w-4 h-4 stroke-[2.5]" />
+            </div>
+          </div>
+          <div className="pt-0.5">
+            <div className="text-xl sm:text-2xl font-bold text-slate-950 font-mono tracking-tight">
+              ₹{totalEarnedCash.toLocaleString('en-IN')}
+            </div>
+            <div className="text-[11px] text-slate-700 font-semibold mt-0.5 truncate">
+              ₹{totalRevenue.toLocaleString('en-IN')} gross value ({collectionRate}% collected)
             </div>
           </div>
         </div>
       </div>
 
-      {/* ================= SECTION 2: WORKER CAPACITY & ASSIGNMENTS ================= */}
-      <div className="bg-gradient-to-r from-[#072C21] via-[#0B3B2C] to-[#08291F] rounded-2xl p-4 sm:p-5 border border-emerald-700/50 shadow-md space-y-3.5 text-white">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-300 flex items-center justify-center border border-emerald-400/30 shadow-2xs">
-              <Scissors className="w-4 h-4 text-emerald-300" />
-            </div>
-            <div>
-              <h3 className="text-xs font-black text-white uppercase tracking-wider">Worker Capacity & Assignments</h3>
-              <p className="text-[11px] text-emerald-200/80 font-medium">Live Karigar queue & workloads</p>
-            </div>
-          </div>
+      {/* ================= COMPACT QUICK ACTION TOOLBAR ================= */}
+      <div className="bg-white p-2.5 sm:p-3 rounded-xl border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex items-center gap-2 text-slate-700">
+          <div className="w-2 h-2 rounded-full bg-[#0B4636]" />
+          <span className="text-xs font-bold tracking-wide text-slate-900 uppercase">
+            {t('quick.title', 'Quick Actions')}
+          </span>
+          <span className="text-[11px] text-slate-500 font-medium hidden md:inline">
+            &bull; Fast boutique operational entry
+          </span>
+        </div>
 
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+          {/* 1. Stitch Button */}
           <button
-            onClick={() => onAssignTimelineClick()}
-            className="text-xs font-black text-white hover:text-emerald-100 bg-white/10 hover:bg-white/20 border border-white/20 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+            type="button"
+            onClick={onNewStitchClick || onNewOrderClick}
+            className="h-8 px-3 rounded-lg bg-[#0B4636] hover:bg-[#073327] text-white font-semibold text-xs flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer active:scale-95"
+            title="New Custom Stitching Order"
           >
-            <span>Assign Timeline</span>
-            <ChevronRight className="w-3.5 h-3.5 text-emerald-200" />
+            <Shirt className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>{t('quick.stitch', 'Stitch')}</span>
+          </button>
+
+          {/* 2. Alter Button */}
+          <button
+            type="button"
+            onClick={onNewAlterClick || onNewOrderClick}
+            className="h-8 px-3 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer active:scale-95"
+            title="Quick Alteration / Fitting"
+          >
+            <Scissors className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>{t('quick.alter', 'Alter')}</span>
+          </button>
+
+          {/* 3. Sale Button */}
+          <button
+            type="button"
+            onClick={onNewSaleClick || onNewOrderClick}
+            className="h-8 px-3 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer active:scale-95"
+            title="Express Ready-made Sale Bill"
+          >
+            <ShoppingBag className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>{t('quick.sale', 'Sale')}</span>
+          </button>
+
+          {/* 4. Appointment Button */}
+          <button
+            type="button"
+            onClick={onNewAppointmentClick || (() => { setSelectedAppointmentForEdit(null); setShowAppointmentModal(true); })}
+            className="h-8 px-3 rounded-lg bg-white hover:bg-slate-50 text-slate-800 font-semibold text-xs flex items-center gap-1.5 border border-slate-200 shadow-2xs transition-all cursor-pointer active:scale-95"
+            title="Book Client Appointment / Fitting"
+          >
+            <Calendar className="w-3.5 h-3.5 text-slate-600" />
+            <span>{t('quick.appointment', 'Appointment')}</span>
           </button>
         </div>
-
-        {/* Unassigned Warning Banner */}
-        {unassignedOrders.length > 0 && (
-          <div className="bg-amber-400/15 border border-amber-300/40 rounded-xl p-3 flex items-center justify-between gap-3 text-amber-100">
-            <div className="flex items-center gap-2.5">
-              <div className="w-7 h-7 rounded-lg bg-amber-400 text-slate-950 font-black flex items-center justify-center text-xs shrink-0 shadow-2xs">
-                {unassignedOrders.length}
-              </div>
-              <div className="text-xs">
-                <span className="font-black text-amber-200">{unassignedOrders.length} Order{unassignedOrders.length > 1 ? 's' : ''} Need Karigar Assignment</span>
-                <span className="text-amber-100/80 hidden sm:inline"> — Assign workers to maintain on-time delivery schedule.</span>
-              </div>
-            </div>
-
-            <button
-              onClick={() => handleOpenAssignModal(unassignedOrders[0])}
-              className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-3 py-1.5 rounded-xl font-black text-xs shrink-0 shadow-2xs cursor-pointer transition-all active:scale-95"
-            >
-              Assign #{unassignedOrders[0]?.id}
-            </button>
-          </div>
-        )}
-
-        {/* Worker Cards Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-          {staffList.map((staff) => {
-            const staffOrdersCount = activeOrders.filter((o) => {
-              if (staff.role === 'Owner' || staff.name.includes('Owner') || staff.name.includes('Self')) {
-                return (
-                  o.assignedTailor === staff.name ||
-                  o.assignedTailor === 'Self (Owner)' ||
-                  o.assignedTailor === 'Owner'
-                );
-              }
-              return o.assignedTailor === staff.name;
-            }).length;
-
-            const isHigh = staffOrdersCount >= 3;
-            const loadPercent = Math.min(100, Math.round((staffOrdersCount / 4) * 100));
-
-            return (
-              <div
-                key={staff.id}
-                onClick={() => onAssignTimelineClick()}
-                className="bg-white/10 hover:bg-white/15 p-3 rounded-xl border border-white/15 hover:border-white/30 transition-all cursor-pointer space-y-2 group shadow-2xs backdrop-blur-xs"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-7 h-7 rounded-lg bg-emerald-400 text-[#072C21] text-xs font-black flex items-center justify-center shrink-0 shadow-2xs">
-                      {staff.name.replace('Self (Owner)', 'SO')[0]}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-xs font-black text-white truncate group-hover:text-emerald-200">
-                        {staff.name}
-                      </div>
-                      <div className="text-[10px] text-emerald-100/70 truncate">
-                        {staff.role} • {isHigh ? 'High Load' : staffOrdersCount > 0 ? 'Optimal' : 'Available'}
-                      </div>
-                    </div>
-                  </div>
-
-                  <span
-                    className={`text-[10px] font-black px-2 py-0.5 rounded-md shrink-0 ${
-                      staffOrdersCount > 0
-                        ? 'bg-emerald-400/20 text-emerald-300 border border-emerald-400/40'
-                        : 'bg-white/10 text-white/70 border border-white/15'
-                    }`}
-                  >
-                    {staffOrdersCount} Active
-                  </span>
-                </div>
-
-                {/* Mini Workload bar */}
-                <div className="w-full bg-white/15 rounded-full h-1.5 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${
-                      isHigh ? 'bg-amber-400' : 'bg-emerald-400'
-                    }`}
-                    style={{ width: `${Math.max(10, loadPercent)}%` }}
-                  />
-                </div>
-              </div>
-            );
-          })}
-
-          {/* Add Worker Action Card */}
-          <div
-            onClick={() => setShowAddWorkerModal(true)}
-            className="bg-white/5 hover:bg-white/10 p-3 rounded-xl border border-dashed border-emerald-400/30 hover:border-emerald-300/60 transition-all cursor-pointer flex items-center justify-center gap-2 group text-emerald-200 hover:text-white"
-          >
-            <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-300 group-hover:bg-emerald-400 group-hover:text-[#072C21] flex items-center justify-center transition-colors shadow-2xs">
-              <Plus className="w-4 h-4" />
-            </div>
-            <div className="text-left leading-tight">
-              <div className="text-xs font-black">+ Add Worker</div>
-              <div className="text-[10px] text-emerald-200/60">Add new karigar or helper</div>
-            </div>
-          </div>
-        </div>
       </div>
 
-      {/* ================= SECTION 3: ORDERS MANAGEMENT HUB ================= */}
-      <div className="space-y-3.5">
-        
-        {/* Tabs Bar & Orders Hub Link */}
-        <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200/90 shadow-xs space-y-3">
-          
-          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5 overflow-x-auto no-scrollbar gap-2">
-            <div className="flex items-center gap-1 sm:gap-2">
+      {/* ================= SECTION 4: ACTIVE ORDERS & WORKSPACE LIST (Structured CRM Data Grid) ================= */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-3 sm:p-5 space-y-4 font-sans">
+        {/* Workspace Top Header & Stage Pipeline Counters */}
+        <div className="flex flex-col gap-3 pb-3 border-b border-slate-200">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-[#0B4636] text-white flex items-center justify-center font-bold shadow-xs shrink-0">
+                <Shirt className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight">
+                    {t('ledger.title', 'Orders')}
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-800 font-extrabold text-[11px] border border-slate-200">
+                    {filteredOrders.length} {t('ledger.totalOrders', 'Total')}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  {t('ledger.subtitle', 'Track real-time production stages, trial schedules, tailor assignments, and payments')}
+                </p>
+              </div>
+            </div>
+
+            {/* View Layout Switcher (Table vs Grouped vs Cards) */}
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setViewMode('table')}
+                title="Structured Table Grid"
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                  viewMode === 'table'
+                    ? 'bg-white text-[#0B4636] shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <LayoutList className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Table</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setViewMode('grouped')}
+                title="Grouped by Production Stage"
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                  viewMode === 'grouped'
+                    ? 'bg-white text-[#0B4636] shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Grouped</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setViewMode('cards')}
+                title="Card Tiles"
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                  viewMode === 'cards'
+                    ? 'bg-white text-[#0B4636] shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Grid className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Cards</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Pipeline Stage Segments Bar & Days Filter */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
+            {/* Days Filter Pills */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+              <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1 shrink-0 mr-1">
+                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                <span>Days:</span>
+              </span>
               {[
-                { id: 'All', label: `All Orders (${activeOrders.length})` },
-                { id: 'Cutting', label: `Cutting (${cuttingCount})` },
-                { id: 'Stitching', label: `Stitching (${stitchingCount})` },
-                { id: 'Completed', label: `Completed (${completedCount})` },
-                { id: 'Alteration', label: `Repair / Alteration (${alterationCount})` },
-              ].map((tab) => {
-                const isActive = activeTab === tab.id;
+                { id: 'all', label: 'All Days' },
+                { id: 'today', label: 'Today' },
+                { id: '3days', label: 'Last 3 Days' },
+                { id: '7days', label: 'Last 7 Days' },
+                { id: '15days', label: 'Last 15 Days' },
+                { id: '30days', label: 'Last 30 Days' },
+              ].map((dayItem) => {
+                const isActive = selectedDaysFilter === dayItem.id;
                 return (
                   <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id as any)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap ${
+                    key={dayItem.id}
+                    type="button"
+                    onClick={() => setSelectedDaysFilter(dayItem.id as any)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap border ${
                       isActive
-                        ? 'bg-[#072C21] text-amber-300 shadow-sm'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                        ? 'bg-[#0B4636] text-white border-[#0B4636] shadow-xs'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                     }`}
                   >
-                    {tab.label}
+                    {dayItem.label}
                   </button>
                 );
               })}
             </div>
 
-            {onOrdersClick && (
-              <button
-                onClick={() => onOrdersClick('all')}
-                className="text-xs font-black text-slate-600 hover:text-slate-900 px-3 py-1.5 rounded-xl hover:bg-slate-100 flex items-center gap-1 transition-all cursor-pointer shrink-0 ml-auto"
-              >
-                <span>Orders Hub</span>
-                <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-              </button>
-            )}
-          </div>
-
-          {/* Search, Filter & Sort Toolbar */}
-          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-            {/* Search Input */}
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by order #, customer name, phone, garment, tailor..."
-                className="w-full bg-[#F8FAFC] border border-slate-200 rounded-xl pl-10 pr-4 py-2 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#072C21] focus:bg-white transition-all shadow-2xs"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* Filter Trigger Button */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowFilterMenu(!showFilterMenu)}
-                className={`px-3 py-2 rounded-xl text-xs font-black border flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ${
-                  selectedPaymentFilter !== 'all' || selectedWorkerFilter !== 'all'
-                    ? 'bg-amber-100 text-amber-950 border-amber-300'
-                    : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
-                }`}
-              >
-                <SlidersHorizontal className="w-3.5 h-3.5" />
-                <span>Filter</span>
-                {(selectedPaymentFilter !== 'all' || selectedWorkerFilter !== 'all') && (
-                  <span className="w-2 h-2 rounded-full bg-amber-500" />
-                )}
-              </button>
-
-              {/* Filter Popover Dropdown */}
-              {showFilterMenu && (
-                <div className="absolute right-0 mt-1.5 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 p-3 z-30 space-y-3 animate-in fade-in zoom-in duration-150">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                    <span className="text-xs font-black text-slate-900">Filter Orders</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedPaymentFilter('all');
-                        setSelectedWorkerFilter('all');
-                      }}
-                      className="text-[10px] text-slate-500 hover:text-slate-800 font-bold"
-                    >
-                      Reset All
-                    </button>
-                  </div>
-
-                  {/* Payment Filter */}
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-slate-600">Payment Status:</label>
-                    <div className="grid grid-cols-3 gap-1">
-                      {['all', 'paid', 'due'].map((p) => (
-                        <button
-                          key={p}
-                          type="button"
-                          onClick={() => setSelectedPaymentFilter(p as any)}
-                          className={`py-1 text-[10px] font-black rounded-lg capitalize ${
-                            selectedPaymentFilter === p
-                              ? 'bg-[#072C21] text-amber-300'
-                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                          }`}
-                        >
-                          {p === 'all' ? 'All' : p === 'paid' ? 'Paid' : 'Balance Due'}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Worker Filter */}
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-slate-600">Assigned Worker:</label>
-                    <select
-                      value={selectedWorkerFilter}
-                      onChange={(e) => setSelectedWorkerFilter(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-800 rounded-xl p-2 focus:outline-none"
-                    >
-                      <option value="all">All Workers</option>
-                      {staffList.map((s) => (
-                        <option key={s.id} value={s.name}>{s.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowFilterMenu(false)}
-                    className="w-full py-1.5 bg-[#072C21] text-white text-xs font-black rounded-xl hover:bg-[#06231a]"
-                  >
-                    Apply Filter
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Sort Select Button */}
-            <div className="relative">
+            {/* Orders View Limit Dropdown */}
+            <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+              <span className="text-[11px] font-bold text-slate-500">Show:</span>
               <select
-                value={selectedSort}
-                onChange={(e) => setSelectedSort(e.target.value as any)}
-                className="bg-white hover:bg-slate-50 border border-slate-200 text-xs font-black text-slate-700 rounded-xl px-3 py-2 cursor-pointer shadow-2xs focus:outline-none"
+                value={limitCount === 'all' ? 'all' : String(limitCount)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setLimitCount(val === 'all' ? 'all' : Number(val));
+                }}
+                className="text-xs font-bold px-2.5 py-1 bg-slate-100 hover:bg-white border border-slate-200 rounded-lg text-slate-900 outline-hidden cursor-pointer shadow-2xs transition-colors"
               >
-                <option value="latest">⇅ Latest First</option>
-                <option value="due_earliest">📅 Due Date Earliest</option>
-                <option value="total_high">💰 Total Amount (High to Low)</option>
-                <option value="balance_high">⚠️ Balance Due (High to Low)</option>
+                <option value="5">Latest 5 Orders</option>
+                <option value="10">Latest 10 Orders</option>
+                <option value="20">Latest 20 Orders</option>
+                <option value="50">Latest 50 Orders</option>
+                <option value="all">Extend & Show All ({filteredOrders.length})</option>
               </select>
             </div>
           </div>
         </div>
 
-        {/* ================= ORDER CARDS LIST (DESKTOP HORIZONTAL CARDS) ================= */}
-        <div className="space-y-3.5">
-          {filteredOrders.length === 0 ? (
-            <div className="bg-white rounded-2xl p-10 text-center border border-slate-200 shadow-xs space-y-3">
-              <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
-                <FileText className="w-6 h-6" />
+        {/* ----------------- RENDER ORDERS ACCORDING TO VIEW MODE ----------------- */}
+        {displayedOrders.length === 0 ? (
+          <div className="p-10 text-center text-[#676879] text-xs font-medium space-y-2 bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+            <Shirt className="w-8 h-8 text-slate-300 mx-auto" />
+            <div className="font-bold text-[#323338] text-sm">{t('ledger.noOrders', 'No orders match this filter.')}</div>
+            <p className="text-xs text-[#676879] max-w-sm mx-auto">
+              Try adjusting your days filter, search query, or click &quot;New Order&quot; to create a new client entry.
+            </p>
+          </div>
+        ) : viewMode === 'table' ? (
+          /* ================= 1. STRUCTURED FULL-WIDTH TABLE / LIST VIEW ================= */
+          <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-xs">
+            {/* Desktop Table Header (Visible on lg+) */}
+            <div className="hidden lg:grid grid-cols-12 gap-3 px-5 py-2.5 bg-slate-50/90 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider border-b border-slate-200">
+              <div className="col-span-3 flex items-center gap-1.5">
+                <Shirt className="w-3.5 h-3.5 text-slate-400" />
+                <span>Order & Garment</span>
               </div>
-              <h3 className="text-sm font-black text-slate-900">No matching orders found</h3>
-              <p className="text-xs text-slate-500">Try adjusting your filters or search keywords.</p>
-              <button
-                onClick={onNewOrderClick}
-                className="mt-2 px-4 py-2 bg-[#072C21] hover:bg-[#06231a] text-white rounded-xl text-xs font-black shadow cursor-pointer inline-flex items-center gap-1.5"
-              >
-                <Plus className="w-4 h-4 stroke-[3]" />
-                <span>+ Create New Order</span>
-              </button>
+              <div className="col-span-3 flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-slate-400" />
+                <span>Customer & Contact</span>
+              </div>
+              <div className="col-span-2 flex items-center gap-1.5">
+                <Scissors className="w-3.5 h-3.5 text-slate-400" />
+                <span>Production Status</span>
+              </div>
+              <div className="col-span-2 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                <span>Promised Delivery & Tailor</span>
+              </div>
+              <div className="col-span-2 text-right flex items-center justify-end gap-1.5">
+                <DollarSign className="w-3.5 h-3.5 text-slate-400" />
+                <span>Balance & Settlement</span>
+              </div>
             </div>
-          ) : (
-            filteredOrders.map((order) => {
-              const hasStitchedPhotos = order.stitchedPhotos && order.stitchedPhotos.length > 0;
-              const isUnassigned = !order.assignedTailor || order.assignedTailor === 'Unassigned' || order.assignedTailor === 'Not Assigned';
-              const currentStageIdx = getStageIndex(order.status);
-              const isCardMenuOpen = openCardMenuId === order.id;
-              const isVoicePlaying = playingVoiceOrderId === order.id;
 
-              // Card background tint based on category & status
-              const cardBgStyle = order.isOverdue
-                ? 'bg-gradient-to-br from-[#FFF1F2] via-[#FFF8F8] to-[#FFE4E6] border-rose-300 ring-1 ring-rose-300/70 shadow-sm'
-                : order.orderCategory === 'Alteration' || order.orderCategory === 'Repair'
-                ? 'bg-gradient-to-br from-[#FAF5FF] via-[#FDFBFE] to-[#F3E8FF]/80 border-fuchsia-200/90 hover:border-fuchsia-300 hover:shadow-md'
-                : order.status === 'Completed' || order.status === 'Delivered'
-                ? 'bg-gradient-to-br from-[#F0FDF4] via-[#F9FDFB] to-[#DCFCE7]/70 border-emerald-200/90 hover:border-emerald-300 hover:shadow-md'
-                : order.status === 'Stitching in Progress'
-                ? 'bg-gradient-to-br from-[#EEF2FF] via-[#F8FAFF] to-[#E0E7FF]/80 border-indigo-200/90 hover:border-indigo-300 hover:shadow-md'
-                : 'bg-gradient-to-br from-[#F0FDF9] via-[#FAFCFB] to-[#E2F7EE]/70 border-teal-200/90 hover:border-teal-300 hover:shadow-md';
+            {/* List Rows with Distinct Horizontal Dividing Lines */}
+            <div className="divide-y-2 divide-slate-100">
+              {displayedOrders.map((ord) => {
+                const isOverdue = ord.isOverdue && ord.status !== 'Delivered';
+                const cleanPhone = ord.customerPhone ? ord.customerPhone.replace(/\D/g, '') : '';
+                const intlPhone = cleanPhone.startsWith('91') ? cleanPhone : `91${cleanPhone}`;
+                const whatsappGreeting = isHindi
+                  ? `नमस्ते ${ord.customerName} जी, बुटीक से आपके ऑर्डर (${ord.garmentType}, ${ord.id}) के संबंध में:`
+                  : isBengali
+                  ? `নমস্কার ${ord.customerName}, বুটিক থেকে আপনার অর্ডার (${ord.garmentType}, ${ord.id}) সম্পর্কিত বার্তা:`
+                  : isOdia
+                  ? `ନମସ୍କାର ${ord.customerName}, ବୁଟିକ୍ ରୁ ଆପଣଙ୍କ ଅର୍ଡର (${ord.garmentType}, ${ord.id}) ସମ୍ପର୍କରେ:`
+                  : `Hello ${ord.customerName}, regarding your boutique order (${ord.garmentType}, ${ord.id}):`;
+                const whatsappUrl = getWhatsAppUrl(intlPhone, whatsappGreeting);
+
+                // Category Icon & Color
+                const isSale = ord.orderCategory === 'Sale';
+                const isAlteration = ord.orderCategory === 'Alteration' || ord.orderCategory === 'Repair';
+                const catLabel = isSale ? 'Sale' : isAlteration ? 'Alter' : 'Stitch';
+                const catBg = isSale
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : isAlteration
+                  ? 'bg-purple-50 text-purple-700 border-purple-200'
+                  : 'bg-blue-50 text-blue-700 border-blue-200';
+
+                // Status styling
+                const getStatusBadge = (status: string) => {
+                  switch (status) {
+                    case 'Completed':
+                      return {
+                        label: 'Ready for Pickup',
+                        bg: 'bg-emerald-50 text-emerald-800 border-emerald-300',
+                        dot: 'bg-emerald-500',
+                      };
+                    case 'Delivered':
+                      return {
+                        label: 'Delivered',
+                        bg: 'bg-teal-50 text-teal-800 border-teal-300',
+                        dot: 'bg-teal-500',
+                      };
+                    case 'Trial':
+                      return {
+                        label: 'Trial & Fitting',
+                        bg: 'bg-purple-50 text-purple-800 border-purple-300',
+                        dot: 'bg-purple-500',
+                      };
+                    case 'In Alteration / Fitting':
+                      return {
+                        label: 'In Alteration',
+                        bg: 'bg-purple-50 text-purple-800 border-purple-300',
+                        dot: 'bg-purple-500',
+                      };
+                    case 'Stitching in Progress':
+                      return {
+                        label: 'Stitching',
+                        bg: 'bg-amber-50 text-amber-900 border-amber-300',
+                        dot: 'bg-amber-500 animate-pulse',
+                      };
+                    case 'New / Cutting':
+                      return {
+                        label: 'New / Cutting',
+                        bg: 'bg-sky-50 text-sky-800 border-sky-300',
+                        dot: 'bg-sky-500',
+                      };
+                    case 'Assigned':
+                    default:
+                      return {
+                        label: status,
+                        bg: 'bg-indigo-50 text-indigo-800 border-indigo-300',
+                        dot: 'bg-indigo-500',
+                      };
+                  }
+                };
+
+                const statusBadge = getStatusBadge(ord.status);
+
+                // Customer initials for avatar
+                const initials = ord.customerName
+                  ? ord.customerName
+                      .split(' ')
+                      .filter(Boolean)
+                      .slice(0, 2)
+                      .map((w) => w[0].toUpperCase())
+                      .join('')
+                  : 'C';
+
+                return (
+                  <div
+                    key={ord.id}
+                    onClick={() => onSelectOrder(ord)}
+                    className={`w-full transition-all duration-150 cursor-pointer hover:bg-slate-50/90 relative group border-l-4 ${
+                      isOverdue
+                        ? 'border-l-rose-500 bg-rose-50/15'
+                        : ord.status === 'Completed'
+                        ? 'border-l-emerald-500'
+                        : ord.status === 'Delivered'
+                        ? 'border-l-slate-700'
+                        : 'border-l-[#0B4636]'
+                    }`}
+                  >
+                    {/* ================= DESKTOP / TABLET ROW (lg+) ================= */}
+                    <div className="hidden lg:grid grid-cols-12 gap-3 items-center px-5 py-2.5 min-h-[56px]">
+                      {/* 1. Order & Garment (col-span-3) */}
+                      <div className="col-span-3 flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center font-bold text-sm shrink-0 border border-slate-200 shadow-2xs group-hover:scale-105 transition-transform">
+                          {isSale ? '🛍️' : isAlteration ? '✂️' : '🧵'}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-nowrap">
+                            <span className="text-[11px] font-mono font-bold text-slate-800 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200 shrink-0">
+                              {ord.id}
+                            </span>
+                            <span className={`text-[10px] font-extrabold px-1.5 py-0.2 rounded border shrink-0 ${catBg}`}>
+                              {catLabel}
+                            </span>
+                            {isOverdue && (
+                              <span className="px-1.5 py-0.2 bg-rose-600 text-white text-[9px] font-black rounded shadow-2xs shrink-0 animate-pulse">
+                                OVERDUE
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs font-bold text-slate-900 truncate group-hover:text-[#0B4636] transition-colors mt-0.5">
+                            {ord.garmentType || 'Garment Item'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 2. Customer & Contact (col-span-3) */}
+                      <div className="col-span-3 flex items-center gap-2 min-w-0">
+                        <div className="w-7 h-7 rounded-full bg-slate-100 border border-slate-200 text-[#0B4636] flex items-center justify-center text-[11px] font-black shrink-0 shadow-2xs">
+                          {initials}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-bold text-slate-900 truncate">
+                            {ord.customerName}
+                          </div>
+                          <div className="text-[11px] text-slate-500 font-medium font-mono truncate">
+                            {ord.customerPhone ? ord.customerPhone : <span className="italic text-slate-400">No phone</span>}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 3. Production Status (col-span-2) */}
+                      <div className="col-span-2 min-w-0">
+                        <span
+                          className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full border shadow-2xs ${statusBadge.bg}`}
+                        >
+                          <span className={`w-2 h-2 rounded-full ${statusBadge.dot} shrink-0`} />
+                          <span className="truncate">{statusBadge.label}</span>
+                        </span>
+                      </div>
+
+                      {/* 4. Promised Delivery & Tailor (col-span-2) */}
+                      <div className="col-span-2 min-w-0">
+                        <div className="flex items-center gap-1 text-xs font-semibold text-slate-700">
+                          <Clock className={`w-3 h-3 ${isOverdue ? 'text-rose-600' : 'text-slate-400'} shrink-0`} />
+                          <span className={isOverdue ? 'text-rose-600 font-bold' : 'text-slate-800'}>
+                            {formatDisplayDate(ord.dueDate)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                          {ord.assignedTailor && ord.assignedTailor !== 'Unassigned' ? (
+                            <span className="text-[10px] text-slate-700 font-semibold bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200 flex items-center gap-1">
+                              <User className="w-2.5 h-2.5 text-slate-500" />
+                              <span className="truncate max-w-[90px]">{ord.assignedTailor}</span>
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 italic bg-slate-50 px-1.5 py-0.2 rounded border border-dashed border-slate-200">
+                              Unassigned
+                            </span>
+                          )}
+
+                          {ord.voiceNoteUrl && (
+                            <button
+                              type="button"
+                              onClick={(e) => handleToggleVoicePlay(ord, e)}
+                              className="inline-flex items-center gap-0.5 text-[#a25ddc] hover:text-purple-950 bg-purple-50 hover:bg-purple-100 px-1.5 py-0.2 rounded font-bold border border-purple-200 text-[10px] cursor-pointer"
+                            >
+                              {playingVoiceOrderId === ord.id ? (
+                                <Pause className="w-2.5 h-2.5" />
+                              ) : (
+                                <Play className="w-2.5 h-2.5" />
+                              )}
+                              <span>Audio</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 5. Balance & Settlement Actions (col-span-2) */}
+                      <div className="col-span-2 flex items-center justify-end gap-2.5 min-w-0">
+                        <div className="text-right">
+                          <div className="text-xs font-black font-mono text-slate-900">
+                            ₹{ord.totalAmount.toLocaleString('en-IN')}
+                          </div>
+                          {ord.balanceDue > 0 ? (
+                            <div className="text-[9px] font-bold text-rose-700 bg-rose-50 px-1.5 py-0.2 rounded border border-rose-200">
+                              Due: ₹{ord.balanceDue.toLocaleString('en-IN')}
+                            </div>
+                          ) : (
+                            <div className="text-[9px] font-bold text-emerald-800 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                              ✓ Paid Full
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          {ord.status !== 'Completed' && ord.status !== 'Delivered' && (
+                            <button
+                              type="button"
+                              onClick={(e) => handleQuickMarkReady(ord, e)}
+                              className="h-6.5 px-2 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold flex items-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                              title="Mark Ready for Delivery"
+                            >
+                              <Check className="w-3 h-3 stroke-[3]" />
+                              <span>Ready</span>
+                            </button>
+                          )}
+
+                          {ord.status !== 'Delivered' && (
+                            <button
+                              type="button"
+                              onClick={(e) => handleQuickMarkDelivered(ord, e)}
+                              className="h-6.5 px-2 rounded bg-teal-700 hover:bg-teal-800 text-white text-[10px] font-bold flex items-center gap-1 shadow-xs cursor-pointer active:scale-95 transition-all"
+                              title="Mark Delivered & Settle"
+                            >
+                              <span>Deliver</span>
+                            </button>
+                          )}
+
+                          {ord.customerPhone && (
+                            <a
+                              href={whatsappUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="h-6.5 w-6.5 rounded-lg bg-[#25D366] hover:bg-[#1faa4b] text-white flex items-center justify-center shadow-xs transition-all hover:scale-105 active:scale-95"
+                              title="Chat on WhatsApp"
+                            >
+                              <MessageSquare className="w-3 h-3 fill-white" />
+                            </a>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => onSelectOrder(ord)}
+                            className="h-6.5 px-1.5 rounded-lg bg-[#0B4636] hover:bg-[#073024] text-amber-300 font-bold text-xs flex items-center justify-center shadow-xs cursor-pointer transition-all hover:scale-105 active:scale-95 border border-amber-300/20"
+                            title="Open Order Details"
+                          >
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ================= MOBILE CARD VIEW (< lg) ================= */}
+                    <div className="block lg:hidden p-3.5 space-y-2.5">
+                      {/* Top Row: Order Tag + Status Badge */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[11px] font-mono font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
+                            {ord.id}
+                          </span>
+                          <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border ${catBg}`}>
+                            {catLabel}
+                          </span>
+                          {isOverdue && (
+                            <span className="px-1.5 py-0.5 bg-rose-600 text-white text-[9px] font-black rounded shadow-2xs animate-pulse">
+                              OVERDUE
+                            </span>
+                          )}
+                        </div>
+                        <span
+                          className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded-full border shadow-2xs ${statusBadge.bg}`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${statusBadge.dot} shrink-0`} />
+                          <span>{statusBadge.label}</span>
+                        </span>
+                      </div>
+
+                      {/* Middle Row: Garment & Customer Details */}
+                      <div className="flex items-start justify-between gap-3 pt-1 border-t border-slate-100">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-bold text-slate-900 truncate flex items-center gap-1.5">
+                            <span>{isSale ? '🛍️' : isAlteration ? '✂️' : '🧵'}</span>
+                            <span className="truncate">{ord.garmentType || 'Garment Item'}</span>
+                          </div>
+                          <div className="text-xs text-slate-600 font-medium flex items-center gap-1.5 mt-0.5 truncate">
+                            <span className="font-semibold text-slate-800 truncate">{ord.customerName}</span>
+                            {ord.customerPhone && (
+                              <>
+                                <span className="text-slate-300">•</span>
+                                <span className="font-mono text-slate-500">{ord.customerPhone}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Amount */}
+                        <div className="text-right shrink-0">
+                          <div className="text-sm font-black font-mono text-slate-900">
+                            ₹{ord.totalAmount.toLocaleString('en-IN')}
+                          </div>
+                          {ord.balanceDue > 0 ? (
+                            <div className="text-[10px] font-bold text-rose-700 bg-rose-50 px-1.5 py-0.2 rounded border border-rose-200">
+                              Due: ₹{ord.balanceDue.toLocaleString('en-IN')}
+                            </div>
+                          ) : (
+                            <div className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                              ✓ Paid Full
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Bottom Row: Delivery & Quick Action Buttons */}
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                        <div className="flex items-center gap-2 text-slate-600 text-[11px]">
+                          <span className="flex items-center gap-1 font-semibold text-slate-700">
+                            <Clock className={`w-3 h-3 ${isOverdue ? 'text-rose-600' : 'text-slate-400'}`} />
+                            {formatDisplayDate(ord.dueDate)}
+                          </span>
+                          {ord.assignedTailor && ord.assignedTailor !== 'Unassigned' && (
+                            <span className="text-slate-500 truncate max-w-[100px]">
+                              • {ord.assignedTailor}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          {ord.customerPhone && (
+                            <a
+                              href={whatsappUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="h-7 w-7 rounded-lg bg-[#25D366] hover:bg-[#1faa4b] text-white flex items-center justify-center shadow-xs"
+                              title="WhatsApp"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5 fill-white" />
+                            </a>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => onSelectOrder(ord)}
+                            className="h-7 px-2.5 rounded-lg bg-[#0B4636] text-amber-300 text-xs font-bold flex items-center gap-1 shadow-xs"
+                          >
+                            <span>Details</span>
+                            <ChevronRight className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer extend button if there are more orders */}
+            {limitCount !== 'all' && filteredOrders.length > displayedOrders.length && (
+              <div className="p-3 bg-slate-50 border-t border-[#e6e9ef] flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-medium">
+                  Showing {displayedOrders.length} of {filteredOrders.length} orders
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLimitCount('all')}
+                  className="px-3 py-1 bg-white hover:bg-slate-100 text-[#0B4636] font-bold text-xs rounded-lg border border-slate-300 shadow-2xs cursor-pointer transition-colors"
+                >
+                  Extend & Show All ({filteredOrders.length}) ↓
+                </button>
+              </div>
+            )}
+          </div>
+        ) : viewMode === 'grouped' ? (
+          /* ================= 2. GROUPED STAGES ACCORDION VIEW ================= */
+          <div className="space-y-4">
+            {[
+              {
+                id: 'in_progress',
+                title: '⏳ Active Production & Alterations',
+                subtitle: 'Cutting, Stitching, and Trial fittings currently on work tables',
+                orders: displayedOrders.filter((o) => o.status !== 'Completed' && o.status !== 'Delivered'),
+                accentColor: 'border-amber-400',
+                badgeBg: 'bg-amber-100 text-amber-900',
+              },
+              {
+                id: 'ready',
+                title: '✨ Ready for Pickup / Delivery',
+                subtitle: 'Garments finished and waiting for client collection',
+                orders: displayedOrders.filter((o) => o.status === 'Completed'),
+                accentColor: 'border-emerald-400',
+                badgeBg: 'bg-emerald-100 text-emerald-900',
+              },
+              {
+                id: 'delivered',
+                title: '✅ Delivered & Fulfilled Archive',
+                subtitle: 'Completed boutique ledger items and history',
+                orders: displayedOrders.filter((o) => o.status === 'Delivered'),
+                accentColor: 'border-slate-400',
+                badgeBg: 'bg-slate-200 text-slate-900',
+              },
+            ].map((group) => {
+              const isCollapsed = Boolean(collapsedGroups[group.id]);
+              const groupTotal = group.orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+              const groupDue = group.orders.reduce((sum, o) => sum + (o.balanceDue || 0), 0);
+
+              return (
+                <div key={group.id} className={`bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs border-l-4 ${group.accentColor}`}>
+                  {/* Group Header */}
+                  <button
+                    type="button"
+                    onClick={() => toggleGroupCollapse(group.id)}
+                    className="w-full p-3 sm:px-4 sm:py-3 bg-[#f8fafc] flex items-center justify-between gap-3 text-left border-b border-slate-200 cursor-pointer hover:bg-slate-100/80 transition-colors"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-xs sm:text-sm text-slate-900">{group.title}</span>
+                        <span className={`px-2 py-0.2 rounded-full text-[10px] font-extrabold ${group.badgeBg}`}>
+                          {group.orders.length} orders
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 font-medium">{group.subtitle}</p>
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="text-right hidden sm:block">
+                        <div className="text-xs font-bold font-mono text-slate-900">₹{groupTotal.toLocaleString('en-IN')}</div>
+                        {groupDue > 0 && <div className="text-[10px] font-bold text-rose-600">₹{groupDue.toLocaleString('en-IN')} Due</div>}
+                      </div>
+                      <div className="w-6 h-6 rounded bg-white text-slate-600 flex items-center justify-center border border-slate-200">
+                        {isCollapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+                      </div>
+                    </div>
+                  </button>
+
+                  {/* Group Body */}
+                  {!isCollapsed && (
+                    <div className="divide-y divide-slate-100">
+                      {group.orders.length === 0 ? (
+                        <div className="p-4 text-center text-xs text-slate-400 italic">
+                          No orders currently in this stage.
+                        </div>
+                      ) : (
+                        group.orders.map((ord) => (
+                          <div
+                            key={ord.id}
+                            onClick={() => onSelectOrder(ord)}
+                            className="p-3 sm:px-4 hover:bg-slate-50 transition-colors cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <span className="text-xs font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                                {ord.id}
+                              </span>
+                              <div className="min-w-0">
+                                <div className="text-xs font-bold text-slate-900 truncate">
+                                  {ord.garmentType} · <span className="font-semibold text-slate-600">{ord.customerName}</span>
+                                </div>
+                                <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                                  <span>Due: {formatDisplayDate(ord.dueDate)}</span>
+                                  {ord.assignedTailor && <span>· 👤 {ord.assignedTailor}</span>}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
+                              <div className="text-right">
+                                <div className="text-xs font-bold font-mono text-slate-900">₹{ord.totalAmount.toLocaleString('en-IN')}</div>
+                                {ord.balanceDue > 0 ? (
+                                  <span className="text-[10px] font-bold text-rose-600">₹{ord.balanceDue} Due</span>
+                                ) : (
+                                  <span className="text-[10px] font-bold text-emerald-600">Paid</span>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => onSelectOrder(ord)}
+                                className="px-2.5 py-1 rounded-lg bg-[#0B4636] hover:bg-[#073327] text-white text-[10px] font-bold cursor-pointer transition-colors"
+                              >
+                                Open
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          /* ================= 3. CARD TILES VIEW ================= */
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {displayedOrders.map((ord) => {
+              const isOverdue = ord.isOverdue && ord.status !== 'Delivered';
+              const cleanPhone = ord.customerPhone ? ord.customerPhone.replace(/\D/g, '') : '';
+              const intlPhone = cleanPhone.startsWith('91') ? cleanPhone : `91${cleanPhone}`;
+              const whatsappUrl = getWhatsAppUrl(intlPhone, `Hello ${ord.customerName}, regarding your order ${ord.id}:`);
+              const isSale = ord.orderCategory === 'Sale';
+              const isAlteration = ord.orderCategory === 'Alteration' || ord.orderCategory === 'Repair';
 
               return (
                 <div
-                  key={order.id}
-                  className={`rounded-xl p-2.5 sm:p-3 border transition-all space-y-1.5 shadow-2xs ${cardBgStyle}`}
+                  key={ord.id}
+                  onClick={() => onSelectOrder(ord)}
+                  className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3 shadow-xs hover:border-[#0B4636] hover:shadow-md transition-all cursor-pointer relative group flex flex-col justify-between"
                 >
-                  {/* Top Header Row of Card */}
-                  <div className="flex items-center justify-between gap-1.5 flex-wrap border-b border-slate-200/50 pb-1.5">
-                    {/* Left Badges */}
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={(e) => handleCopyOrderId(order.id, e)}
-                        className="bg-white/90 hover:bg-white px-1.5 py-0.5 rounded-md text-[11px] font-mono font-black text-slate-800 border border-slate-200/90 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                        title="Click to copy Order #"
-                      >
-                        <span>#{order.id}</span>
-                        <Copy className="w-2.5 h-2.5 text-slate-400" />
-                        {copiedOrderId === order.id && (
-                          <span className="text-[9px] text-emerald-700 font-bold ml-0.5">Copied!</span>
-                        )}
-                      </button>
-
-                      {/* Category Pill */}
-                      <span className={`px-1.5 py-0.2 rounded text-[9px] font-black border shadow-2xs ${
-                        order.orderCategory === 'Alteration' || order.orderCategory === 'Repair'
-                          ? 'bg-fuchsia-100 text-fuchsia-900 border-fuchsia-300'
-                          : 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                      }`}>
-                        {order.orderCategory || 'New Stitch'}
+                  {/* Top: Header with ID, Category, Status */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[11px] font-mono font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
+                        {ord.id}
                       </span>
-
-                      {order.isRepeatCustomer && (
-                        <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-900 text-[9px] font-bold border border-blue-300 flex items-center gap-0.5 shadow-2xs">
-                          <UserCheck className="w-2.5 h-2.5" />
-                          Repeat
-                        </span>
-                      )}
-
-                      {order.isOverdue && (
-                        <span className="px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 text-[9px] font-black border border-rose-300 flex items-center gap-0.5 shadow-2xs animate-pulse">
-                          🔥 Overdue
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                        {isSale ? 'Sale' : isAlteration ? 'Alter' : 'Stitch'}
+                      </span>
+                      {isOverdue && (
+                        <span className="px-1.5 py-0.5 bg-rose-600 text-white text-[9px] font-black rounded shadow-2xs animate-pulse">
+                          OVERDUE
                         </span>
                       )}
                     </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-800 border border-slate-200">
+                      {ord.status}
+                    </span>
+                  </div>
 
-                    {/* Right Payment Status & 3-Dot Menu */}
-                    <div className="flex items-center gap-1.5">
-                      <div className="text-right flex items-center gap-1.5">
-                        <span className="text-xs font-black text-slate-900">Total: ₹{order.totalAmount}</span>
-                        {order.balanceDue > 0 ? (
-                          <span className="px-1.5 py-0.2 rounded bg-rose-100 border border-rose-300 text-rose-800 text-[9px] font-black inline-block shadow-2xs">
-                            Due: ₹{order.balanceDue}
-                          </span>
+                  {/* Middle: Garment & Customer */}
+                  <div className="pt-2 border-t border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">{isSale ? '🛍️' : isAlteration ? '✂️' : '🧵'}</span>
+                      <h4 className="text-sm font-bold text-slate-900 truncate group-hover:text-[#0B4636] transition-colors">
+                        {ord.garmentType || 'Garment Item'}
+                      </h4>
+                    </div>
+                    <p className="text-xs text-slate-600 font-medium truncate mt-1">
+                      <span className="font-semibold text-slate-900">{ord.customerName}</span> · {ord.customerPhone || 'No Phone'}
+                    </p>
+                  </div>
+
+                  {/* Bottom: Date & Financials & Actions */}
+                  <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between text-xs">
+                    <div>
+                      <div className={`text-[11px] font-semibold flex items-center gap-1 ${isOverdue ? 'text-rose-600 font-bold' : 'text-slate-500'}`}>
+                        <Clock className="w-3 h-3" />
+                        <span>{formatDisplayDate(ord.dueDate)}</span>
+                      </div>
+                      {ord.assignedTailor && ord.assignedTailor !== 'Unassigned' && (
+                        <div className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[120px]">
+                          👤 {ord.assignedTailor}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <div className="text-right">
+                        <span className="font-mono font-bold text-slate-900 text-sm">₹{ord.totalAmount.toLocaleString('en-IN')}</span>
+                        {ord.balanceDue > 0 ? (
+                          <span className="text-[10px] font-bold text-rose-600 block">Due: ₹{ord.balanceDue.toLocaleString('en-IN')}</span>
                         ) : (
-                          <span className="px-1.5 py-0.2 rounded bg-emerald-100 border border-emerald-300 text-emerald-800 text-[9px] font-black inline-block shadow-2xs">
-                            ✓ Paid in Full
-                          </span>
+                          <span className="text-[10px] font-bold text-emerald-600 block">✓ Paid</span>
                         )}
                       </div>
-
-                      {/* 3-Dot Options Dropdown */}
-                      <div className="relative">
-                        <button
-                          type="button"
-                          onClick={() => setOpenCardMenuId(isCardMenuOpen ? null : order.id)}
-                          className="p-1 rounded bg-white/80 hover:bg-white text-slate-600 hover:text-slate-900 border border-slate-200/80 transition-colors cursor-pointer shadow-2xs"
+                      {ord.customerPhone && (
+                        <a
+                          href={whatsappUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="h-7 w-7 rounded-lg bg-[#25D366] hover:bg-[#1faa4b] text-white flex items-center justify-center shadow-xs"
+                          title="WhatsApp"
                         >
-                          <MoreVertical className="w-3 h-3" />
-                        </button>
-
-                        {isCardMenuOpen && (
-                          <div className="absolute right-0 mt-1 w-48 bg-white rounded-xl shadow-xl border border-slate-200 p-1 z-30 space-y-0.5 text-xs font-bold text-slate-700 animate-in fade-in zoom-in duration-150">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenCardMenuId(null);
-                                onSelectOrder(order);
-                              }}
-                              className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2"
-                            >
-                              <FileText className="w-3.5 h-3.5 text-slate-500" />
-                              <span>View Full Details</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenCardMenuId(null);
-                                handleOpenAssignModal(order);
-                              }}
-                              className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2"
-                            >
-                              <Scissors className="w-3.5 h-3.5 text-slate-500" />
-                              <span>Change Tailor / Due Date</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenCardMenuId(null);
-                                setReceiptModalOrder(order);
-                              }}
-                              className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2"
-                            >
-                              <Printer className="w-3.5 h-3.5 text-slate-500" />
-                              <span>Print / Share Bill</span>
-                            </button>
-
-                            {order.status !== 'Delivered' && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenCardMenuId(null);
-                                  handleCardStatusChangeRequest(order, 'Delivered');
-                                }}
-                                className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-emerald-50 text-emerald-800 font-black flex items-center gap-2"
-                              >
-                                <ShoppingBag className="w-3.5 h-3.5 text-emerald-600" />
-                                <span>Mark Delivered</span>
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Middle Row (3 Horizontal Columns on Desktop) */}
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 items-center">
-                    
-                    {/* Column 1: Customer & Garment (4 cols) */}
-                    <div className="lg:col-span-4 flex flex-col justify-center space-y-1">
-                      <div className="flex items-center gap-2">
-                        {/* Photo Box */}
-                        <div
-                          onClick={() => {
-                            if (order.receiptImageUrl || (order.fabricPhotos && order.fabricPhotos[0])) {
-                              setSlipModalOrder(order);
-                            } else {
-                              onSelectOrder(order);
-                            }
-                          }}
-                          className="w-9 h-9 rounded-lg bg-white border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center cursor-pointer hover:opacity-90 relative group shadow-2xs"
-                          title="Click to view slip / fabric photo"
-                        >
-                          {hasStitchedPhotos && order.stitchedPhotos ? (
-                            <img src={order.stitchedPhotos[0]} alt="Stitched" className="w-full h-full object-cover" />
-                          ) : order.fabricPhotos && order.fabricPhotos[0] ? (
-                            <img src={order.fabricPhotos[0]} alt="Fabric" className="w-full h-full object-cover" />
-                          ) : order.receiptImageUrl ? (
-                            <img src={order.receiptImageUrl} alt="Slip" className="w-full h-full object-cover" />
-                          ) : (
-                            <span className="text-sm">🧵</span>
-                          )}
-                        </div>
-
-                        {/* Customer Info */}
-                        <div className="min-w-0 flex-1">
-                          <h4
-                            onClick={() => onSelectOrder(order)}
-                            className="text-xs font-black text-slate-900 truncate hover:text-[#072C21] cursor-pointer leading-tight"
-                          >
-                            {order.customerName}
-                          </h4>
-                          <div className="text-[10px] text-slate-500 font-medium truncate">{order.customerPhone}</div>
-                          <div className="text-[11px] font-black text-[#072C21] truncate">
-                            {order.garmentType} {order.subTypeStyle && <span className="font-semibold text-slate-500">({order.subTypeStyle})</span>}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Special Notes banner if present */}
-                      {order.specialNotes && (
-                        <div className="bg-amber-50/90 border border-amber-200/90 rounded-md p-1 flex items-center gap-1 text-[9px] text-amber-950 shadow-2xs">
-                          <span className="font-black text-amber-800 shrink-0">📝</span>
-                          <span className="truncate font-semibold">{order.specialNotes}</span>
-                        </div>
+                          <MessageSquare className="w-3.5 h-3.5 fill-white" />
+                        </a>
                       )}
-                    </div>
-
-                    {/* Column 2: Worker & 5-Node Stepper (6 cols) */}
-                    <div className="lg:col-span-6 space-y-1 bg-white/90 backdrop-blur-xs p-1.5 sm:p-2 rounded-xl border border-slate-200/70 shadow-2xs">
-                      {/* Worker Header Info */}
-                      <div className="flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <div className="w-4 h-4 rounded bg-[#072C21] text-amber-300 text-[9px] font-black flex items-center justify-center shrink-0">
-                            {isUnassigned ? '✂️' : order.assignedTailor[0]}
-                          </div>
-                          <span className="font-black text-slate-900 text-[11px] truncate">
-                            {isUnassigned ? 'Unassigned' : order.assignedTailor}
-                          </span>
-                          <span className={`text-[8px] font-bold px-1.5 py-0.2 rounded-full ${
-                            order.status === 'Stitching in Progress'
-                              ? 'bg-indigo-100 text-indigo-800'
-                              : order.status === 'Completed'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-slate-200 text-slate-700'
-                          }`}>
-                            {order.status}
-                          </span>
-                        </div>
-
-                        <div className="text-[9px] text-slate-400 font-medium">
-                          ⏱ ~{order.estimatedHours || 4}h
-                        </div>
-                      </div>
-
-                      {/* 5-Node Stepper */}
-                      <div className="relative flex items-center justify-between pt-0.5">
-                        {/* Connecting track line */}
-                        <div className="absolute top-[10px] left-3 right-3 h-0.5 bg-slate-200 -z-0" />
-                        <div
-                          className="absolute top-[10px] left-3 h-0.5 bg-emerald-500 -z-0 transition-all duration-300"
-                          style={{ width: `${Math.min(100, Math.max(0, (currentStageIdx / 4) * 100))}%` }}
-                        />
-
-                        {[
-                          { stage: 'Cutting', label: 'Cutting' },
-                          { stage: 'Assigned', label: 'Assigned' },
-                          { stage: 'Stitching', label: 'Stitching' },
-                          { stage: 'Ready', label: 'Ready' },
-                          { stage: 'Delivered', label: 'Delivered' },
-                        ].map((node, nIdx) => {
-                          const isDone = nIdx < currentStageIdx;
-                          const isCurrent = nIdx === currentStageIdx;
-
-                          return (
-                            <div
-                              key={node.stage}
-                              onClick={() => {
-                                if (node.stage === 'Cutting') handleCardStatusChangeRequest(order, 'New / Cutting');
-                                if (node.stage === 'Assigned') handleCardStatusChangeRequest(order, 'Assigned');
-                                if (node.stage === 'Stitching') handleCardStatusChangeRequest(order, 'Stitching in Progress');
-                                if (node.stage === 'Ready') handleCardStatusChangeRequest(order, 'Completed');
-                                if (node.stage === 'Delivered') handleCardStatusChangeRequest(order, 'Delivered');
-                              }}
-                              className="flex flex-col items-center cursor-pointer relative z-10 group"
-                              title={`Click to switch status to ${node.stage}`}
-                            >
-                              {/* Node Circle */}
-                              <div
-                                className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black transition-all ${
-                                  isDone
-                                    ? 'bg-emerald-500 text-white shadow-2xs'
-                                    : isCurrent
-                                    ? 'bg-indigo-600 text-white ring-2 ring-indigo-200 shadow-xs scale-105'
-                                    : 'bg-white border border-slate-300 text-slate-400 group-hover:border-slate-400'
-                                }`}
-                              >
-                                {isDone ? (
-                                  <Check className="w-2.5 h-2.5 stroke-[3]" />
-                                ) : isCurrent ? (
-                                  <Sparkles className="w-2.5 h-2.5 text-amber-300" />
-                                ) : (
-                                  <span>{nIdx + 1}</span>
-                                )}
-                              </div>
-
-                              {/* Label */}
-                              <span
-                                className={`text-[9px] mt-0.5 font-bold ${
-                                  isCurrent
-                                    ? 'text-indigo-950 font-black'
-                                    : isDone
-                                    ? 'text-slate-800'
-                                    : 'text-slate-400'
-                                }`}
-                              >
-                                {node.label}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Column 3: Delivery Info Box (2 cols) */}
-                    <div className="lg:col-span-2 bg-white/90 backdrop-blur-xs p-1.5 rounded-xl border border-slate-200/70 text-center sm:text-right flex lg:flex-col justify-between items-center lg:items-end shadow-2xs">
-                      <div className="flex items-center gap-1 text-[8px] font-bold text-slate-400 uppercase tracking-wider">
-                        <Calendar className="w-2 h-2" />
-                        <span>Delivery</span>
-                      </div>
-                      <div>
-                        <div className="text-xs font-black text-slate-900">{order.dueDate}</div>
-                        <div className="text-[9px] text-slate-500 font-medium">{order.dueTime || '18:00'}</div>
-                      </div>
-                      {order.isOverdue ? (
-                        <span className="text-[8px] font-black text-rose-600">🔴 Overdue</span>
-                      ) : (
-                        <span className="text-[8px] font-bold text-emerald-600">🟢 On Track</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Bottom Action Buttons Row */}
-                  <div className="flex items-center justify-between pt-1 border-t border-slate-200/50 gap-1 flex-wrap">
-                    {/* Left Actions: Slip Photo, Receipt, & Single Voice Note button */}
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() => setSlipModalOrder(order)}
-                        className="px-2 py-0.5 rounded-md bg-white/90 hover:bg-white text-amber-900 border border-amber-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                      >
-                        <Camera className="w-3 h-3 text-amber-800" />
-                        <span>Slip</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setReceiptModalOrder(order)}
-                        className="px-2 py-0.5 rounded-md bg-white/90 hover:bg-white text-teal-900 border border-teal-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                      >
-                        <FileText className="w-3 h-3 text-teal-800" />
-                        <span>Receipt</span>
-                      </button>
-
-                      {/* Single Voice Note Play Button */}
-                      {order.voiceNoteUrl && (
-                        <button
-                          type="button"
-                          onClick={(e) => handleToggleVoicePlay(order, e)}
-                          className={`px-2 py-0.5 rounded-md border text-[11px] font-black flex items-center gap-1 cursor-pointer transition-all shadow-2xs ${
-                            isVoicePlaying
-                              ? 'bg-purple-600 text-white border-purple-500 shadow-md ring-2 ring-purple-300 animate-pulse'
-                              : 'bg-purple-100 hover:bg-purple-200 text-purple-900 border-purple-300'
-                          }`}
-                          title={isVoicePlaying ? 'Pause Voice Instruction' : 'Play Voice Instruction'}
-                        >
-                          <Mic className={`w-3 h-3 ${isVoicePlaying ? 'text-white' : 'text-purple-800'}`} />
-                          <span>{isVoicePlaying ? 'Playing...' : `Voice (${order.voiceNoteDurationSec || 12}s)`}</span>
-                          {isVoicePlaying ? (
-                            <Pause className="w-3 h-3 fill-current" />
-                          ) : (
-                            <Play className="w-3 h-3 fill-current ml-0.5" />
-                          )}
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Right Actions: WhatsApp & Phone Call */}
-                    <div className="flex items-center gap-1">
-                      <a
-                        href={getWhatsAppUrl(
-                          order.customerPhone,
-                          `Hello ${order.customerName}, update from ${shopProfile?.shopName || 'ShopScopers Tailor'} regarding your ${order.garmentType} (Order #${order.id}): Current status is "${order.status}". Balance due at pickup: ₹${order.balanceDue}.`
-                        )}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-2.5 py-0.5 rounded-md bg-[#25D366] hover:bg-[#20bd5a] text-white font-black text-[11px] flex items-center gap-1 shadow-2xs cursor-pointer transition-all active:scale-95"
-                      >
-                        <Send className="w-3 h-3" />
-                        <span>WhatsApp</span>
-                      </a>
-
-                      <a
-                        href={`tel:${clean10DigitPhone(order.customerPhone)}`}
-                        className="p-1 rounded bg-white/90 hover:bg-white text-slate-700 border border-slate-200 cursor-pointer shadow-2xs"
-                        title="Call Customer Directly"
-                      >
-                        <Phone className="w-3 h-3" />
-                      </a>
                     </div>
                   </div>
                 </div>
               );
-            })
-          )}
-        </div>
+            })}
+          </div>
+        )}
       </div>
 
-      {/* ================= MODAL 1: QUICK ASSIGN KARIGAR MODAL ================= */}
-      {assigningOrder && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center z-50 p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl p-5 sm:p-6 max-w-lg w-full shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in duration-150 my-auto max-h-[92vh] overflow-y-auto">
-            
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-2xl bg-[#072C21] text-amber-300 flex items-center justify-center font-black shadow-xs">
-                  <Scissors className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black text-slate-900">Assign Order #{assigningOrder.id}</h3>
-                  <p className="text-[11px] text-slate-500 font-semibold">
-                    {assigningOrder.customerName} • <strong className="text-slate-800">{assigningOrder.garmentType}</strong>
-                  </p>
-                </div>
-              </div>
+      {/* ================= SECTION 2: FULL-WIDTH SLEEK "NEEDS ATTENTION" WORK QUEUE ================= */}
+      <BoutiqueNeedsAttentionQueue
+        orders={orders}
+        onSelectOrder={onSelectOrder}
+        onOpenAssignModal={handleOpenAssignModal}
+        onQuickCollectPayment={(ord) => {
+          setPreselectedPaymentOrder(ord);
+          setShowPaymentModal(true);
+        }}
+        onUpdateStatus={onUpdateOrderStatus}
+      />
 
-              <button
-                type="button"
-                onClick={() => setAssigningOrder(null)}
-                className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 transition-colors cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      {/* ================= SECTION 3: APPOINTMENTS & CLIENT VISITS ================= */}
+      <BoutiqueAppointmentsSection
+        appointments={appointments}
+        orders={activeOrders}
+        onOpenBookAppointmentModal={(existing) => {
+          setSelectedAppointmentForEdit(existing || null);
+          setShowAppointmentModal(true);
+        }}
+        onSaveAppointment={onSaveAppointment}
+        onDeleteAppointment={onDeleteAppointment}
+        onToggleAppointmentChecklist={onToggleAppointmentChecklist}
+        onSelectOrder={onSelectOrder}
+        onNavigateToManager={onNewAppointmentClick}
+      />
 
-            {/* Step 1: Select Karigar */}
-            <div className="space-y-2">
-              <label className="text-xs font-black text-slate-900 flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5 text-[#072C21]" />
-                <span>1. Select Karigar / Worker:</span>
-              </label>
+      {/* ================= MODAL FLOWS ================= */}
+      {/* 1. Quick Action Hub Modal */}
+      <BoutiqueSpeedNewModal
+        isOpen={showSpeedNewModal}
+        onClose={() => setShowSpeedNewModal(false)}
+        onSelectAction={handleSpeedActionSelect}
+      />
 
-              <div className="grid grid-cols-2 gap-2">
-                {staffList.map((staff) => {
-                  const isSelected = selectedKarigar === staff.name;
-                  const staffSched = generateWorkerScheduleForDays(staff.name, activeOrders, 1);
-                  const todayFree = staffSched[0]?.freeHours ?? 8;
+      {/* 2. Boutique Visit / Appointment Booking Modal */}
+      <BoutiqueAppointmentModal
+        isOpen={showAppointmentModal}
+        onClose={() => {
+          setShowAppointmentModal(false);
+          setSelectedAppointmentForEdit(null);
+        }}
+        orders={activeOrders}
+        existingAppointment={selectedAppointmentForEdit}
+        onSaveAppointment={async (appt) => {
+          if (onSaveAppointment) await onSaveAppointment(appt);
+        }}
+      />
 
-                  return (
-                    <button
-                      key={staff.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedKarigar(staff.name);
-                        const sched = generateWorkerScheduleForDays(staff.name, activeOrders, 8);
-                        const match = sched.find((s) => !s.isDayOff && s.freeHours >= assignEstHours) || sched[0];
-                        if (match) setAssignDueDate(match.dateStr);
-                      }}
-                      className={`p-2.5 rounded-2xl border text-left transition-all cursor-pointer space-y-1 ${
-                        isSelected
-                          ? 'bg-[#072C21] text-white border-[#072C21] shadow-md ring-2 ring-amber-300'
-                          : 'bg-slate-50 text-slate-800 border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-black truncate">{staff.name}</span>
-                        {isSelected && <Check className="w-4 h-4 text-amber-300 shrink-0" />}
-                      </div>
-                      <div className="text-[10px] opacity-80">{todayFree}h Free Today</div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+      {/* 3. Quick Payment Settlement Modal */}
+      <BoutiqueQuickPaymentModal
+        isOpen={showPaymentModal}
+        onClose={() => {
+          setShowPaymentModal(false);
+          setPreselectedPaymentOrder(null);
+        }}
+        orders={activeOrders}
+        preselectedOrder={preselectedPaymentOrder}
+        onRecordPayment={(orderId, amt, mode, note) => {
+          if (onRecordQuickPayment) {
+            onRecordQuickPayment(orderId, amt, mode, note);
+          } else if (onDeliverOrder) {
+            onDeliverOrder(orderId, amt, mode, [], note);
+          }
+        }}
+      />
 
-            {/* Step 2: Date & Slot */}
-            <div className="space-y-2 pt-1 border-t border-slate-100">
-              <label className="text-xs font-black text-slate-900 flex items-center gap-1.5">
-                <CalendarIcon className="w-3.5 h-3.5 text-[#072C21]" />
-                <span>2. Promised Date & Delivery Slot:</span>
-              </label>
-
-              <PromisedDateTimeInput
-                date={assignDueDate}
-                time={assignDueTime}
-                onDateChange={(d) => setAssignDueDate(d)}
-                onTimeChange={(t) => setAssignDueTime(t)}
-                showPresets={true}
-                showStatusBanner={false}
-                label="Select Promised Date & Time"
-              />
-            </div>
-
-            {/* Step 3: Estimated Hours */}
-            <div className="space-y-1.5 pt-1 border-t border-slate-100">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-black text-slate-800">3. Estimated Stitching Effort:</span>
-                <span className="font-black text-[#072C21] bg-emerald-100 px-2 py-0.5 rounded-md">
-                  {assignEstHours} Hours
-                </span>
-              </div>
-              <input
-                type="range"
-                min="1"
-                max="12"
-                step="0.5"
-                value={assignEstHours}
-                onChange={(e) => setAssignEstHours(parseFloat(e.target.value))}
-                className="w-full accent-[#072C21] cursor-pointer"
-              />
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setAssigningOrder(null)}
-                className="py-2.5 px-4 rounded-xl border border-slate-200 font-bold text-xs text-slate-700 hover:bg-slate-50 cursor-pointer"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={handleConfirmQuickAssign}
-                className="flex-1 py-2.5 rounded-xl bg-[#072C21] hover:bg-[#06231a] font-black text-xs text-amber-300 shadow-md cursor-pointer flex items-center justify-center gap-1.5 transition-all active:scale-98"
-              >
-                <Check className="w-4 h-4 text-amber-300" />
-                <span>Assign to {selectedKarigar}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ================= MODAL 2: ADD WORKER MODAL ================= */}
-      {showAddWorkerModal && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-[#072C21] text-amber-300 flex items-center justify-center font-black">
-                  <Scissors className="w-4 h-4" />
-                </div>
-                <h3 className="text-sm font-black text-slate-900">Add New Karigar / Tailor</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAddWorkerModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:bg-slate-100"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateWorker} className="space-y-3">
-              <div>
-                <label className="text-xs font-black text-slate-800">Worker Full Name *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Ramesh Bhai"
-                  value={newWorkerName}
-                  onChange={(e) => setNewWorkerName(e.target.value)}
-                  className="w-full mt-1 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-[#072C21]"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-black text-slate-800">Mobile Number (Optional)</label>
-                <input
-                  type="tel"
-                  placeholder="e.g. 9876543210"
-                  value={newWorkerPhone}
-                  onChange={(e) => setNewWorkerPhone(e.target.value)}
-                  className="w-full mt-1 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-[#072C21]"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-black text-slate-800">Skill / Specialization</label>
-                <select
-                  value={newWorkerRole}
-                  onChange={(e) => setNewWorkerRole(e.target.value as any)}
-                  className="w-full mt-1 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-[#072C21]"
-                >
-                  <option value="Stitching Karigar">Stitching Karigar</option>
-                  <option value="Master Tailor">Master Tailor</option>
-                  <option value="Cutting Master">Cutting Master</option>
-                  <option value="Helper / Finisher">Helper / Finisher</option>
-                </select>
-              </div>
-
-              <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setShowAddWorkerModal(false)}
-                  className="py-2.5 px-4 rounded-xl border border-slate-200 font-bold text-xs text-slate-700"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 bg-[#072C21] hover:bg-[#06231a] text-white font-black text-xs rounded-xl shadow cursor-pointer"
-                >
-                  Save Worker
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ================= MODAL 3: RECEIPT / BILL MODAL ================= */}
-      {receiptModalOrder && (
-        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-black">
-                  <FileText className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black text-slate-900">Order Invoice / Receipt</h3>
-                  <p className="text-[10px] text-slate-500 font-mono">#{receiptModalOrder.id}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setReceiptModalOrder(null)}
-                className="p-1 rounded-lg text-slate-400 hover:bg-slate-100"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Receipt Body */}
-            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 font-mono text-xs space-y-3 text-slate-800">
-              <div className="text-center border-b border-slate-200 pb-2">
-                <div className="font-black text-sm text-slate-900">{shopProfile?.shopName || 'ShopScopers Tailor'}</div>
-                <div className="text-[10px] text-slate-500">{shopProfile?.address || 'Master Boutique & Tailors'}</div>
-                <div className="text-[10px] text-slate-500">Phone: {userPhone || '+91 7608807790'}</div>
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Customer:</span>
-                  <span className="font-bold">{receiptModalOrder.customerName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Mobile:</span>
-                  <span>{receiptModalOrder.customerPhone}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Garment:</span>
-                  <span className="font-bold">{receiptModalOrder.garmentType}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Promised Date:</span>
-                  <span className="font-bold text-[#072C21]">{receiptModalOrder.dueDate}</span>
-                </div>
-              </div>
-
-              <div className="border-t border-b border-slate-200 py-2 space-y-1">
-                <div className="flex justify-between">
-                  <span>Stitching Charges:</span>
-                  <span className="font-bold">₹{receiptModalOrder.totalAmount}</span>
-                </div>
-                <div className="flex justify-between text-emerald-700">
-                  <span>Advance Received:</span>
-                  <span>- ₹{receiptModalOrder.advancePaid}</span>
-                </div>
-                <div className="flex justify-between font-black text-sm text-slate-900 pt-1 border-t border-slate-200">
-                  <span>Balance Due on Delivery:</span>
-                  <span className={receiptModalOrder.balanceDue > 0 ? 'text-rose-600' : 'text-emerald-600'}>
-                    ₹{receiptModalOrder.balanceDue}
-                  </span>
-                </div>
-              </div>
-
-              <div className="text-center text-[10px] text-slate-400">
-                Thank you for choosing {shopProfile?.shopName || 'ShopScopers'}!
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center gap-2 pt-2">
-              <a
-                href={getWhatsAppUrl(
-                  receiptModalOrder.customerPhone,
-                  `🧾 *Receipt from ${shopProfile?.shopName || 'ShopScopers'}*\nOrder #${receiptModalOrder.id}\nGarment: ${receiptModalOrder.garmentType}\nTotal: ₹${receiptModalOrder.totalAmount}\nAdvance: ₹${receiptModalOrder.advancePaid}\nBalance Due: ₹${receiptModalOrder.balanceDue}\nPromised Date: ${receiptModalOrder.dueDate}`
-                )}
-                target="_blank"
-                rel="noreferrer"
-                className="flex-1 py-2.5 bg-[#25D366] hover:bg-[#20bd5a] text-white font-black text-xs rounded-xl flex items-center justify-center gap-1.5 shadow"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>Send WhatsApp Receipt</span>
-              </a>
-
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="py-2.5 px-4 rounded-xl border border-slate-200 font-bold text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-1.5"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Print</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ================= MODAL 4: SLIP PHOTO MODAL ================= */}
-      {slipModalOrder && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl p-5 max-w-md w-full shadow-2xl border border-slate-200 space-y-3 animate-in fade-in zoom-in duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-              <div>
-                <h3 className="text-sm font-black text-slate-900">Order Slip / Fabric Photo</h3>
-                <p className="text-[11px] text-slate-500 font-mono">#{slipModalOrder.id} • {slipModalOrder.customerName}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSlipModalOrder(null)}
-                className="p-1 rounded-lg text-slate-400 hover:bg-slate-100"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="rounded-2xl overflow-hidden bg-slate-100 border border-slate-200 max-h-[60vh] flex items-center justify-center">
-              {slipModalOrder.receiptImageUrl || (slipModalOrder.fabricPhotos && slipModalOrder.fabricPhotos[0]) ? (
-                <img
-                  src={slipModalOrder.receiptImageUrl || slipModalOrder.fabricPhotos[0]}
-                  alt="Order Slip"
-                  className="w-full h-auto object-contain"
-                />
-              ) : (
-                <div className="p-8 text-center text-slate-400 space-y-2">
-                  <Camera className="w-8 h-8 mx-auto" />
-                  <p className="text-xs">No physical slip photo was captured for this order.</p>
-                </div>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setSlipModalOrder(null)}
-              className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ================= MODAL 5: ORDER COMPLETED MODAL ================= */}
-      {completedModalOrder && (
-        <OrderCompletedModal
-          order={completedModalOrder}
-          shopProfile={shopProfile}
-          onClose={() => setCompletedModalOrder(null)}
-          onConfirmCompleted={handleConfirmCompleted}
-        />
-      )}
-
-      {/* ================= MODAL 6: ORDER DELIVERY MODAL ================= */}
-      {deliveryModalOrder && (
-        <OrderDeliveryModal
-          order={deliveryModalOrder}
-          shopProfile={shopProfile}
-          onClose={() => setDeliveryModalOrder(null)}
-          onConfirmDelivery={handleConfirmDeliverySettlement}
-        />
-      )}
-
-      {/* ================= MODAL 7: PHOTO ZOOM ================= */}
-      {expandedPhotoUrl && (
-        <div
-          onClick={() => setExpandedPhotoUrl(null)}
-          className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center z-50 p-4 cursor-pointer"
-        >
-          <div className="relative max-w-2xl max-h-[90vh] bg-slate-900 rounded-3xl overflow-hidden shadow-2xl p-2">
-            <button
-              onClick={() => setExpandedPhotoUrl(null)}
-              className="absolute top-4 right-4 p-2 bg-black/60 text-white rounded-full hover:bg-black"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <img
-              src={expandedPhotoUrl}
-              alt="Zoomed"
-              className="w-full h-auto max-h-[85vh] object-contain rounded-2xl"
-            />
-          </div>
-        </div>
-      )}
-
+      {/* 4. Floating 'Quick Action' Speed-Dial Menu */}
+      <BoutiqueFloatingQuickAction
+        onNewStitch={() => {
+          if (onNewStitchClick) onNewStitchClick();
+          else onNewOrderClick();
+        }}
+        onNewAlter={() => {
+          if (onNewAlterClick) onNewAlterClick();
+          else onNewOrderClick();
+        }}
+        onNewSale={() => {
+          if (onNewSaleClick) onNewSaleClick();
+          else onNewOrderClick();
+        }}
+        onNewAppointment={() => {
+          if (onNewAppointmentClick) onNewAppointmentClick();
+          else {
+            setSelectedAppointmentForEdit(null);
+            setShowAppointmentModal(true);
+          }
+        }}
+      />
     </div>
   );
 };

@@ -51,8 +51,8 @@ export const ORDER_STAGES: {
   },
   {
     status: 'Assigned',
-    label: '2. Assigned to Karigar',
-    shortLabel: 'Assigned',
+    label: '2. In Production',
+    shortLabel: 'In Prod',
     stepNumber: 2,
     icon: Clock,
     color: 'text-blue-700',
@@ -402,7 +402,7 @@ export const OrderStatusTracker: React.FC<OrderStatusTrackerProps> = ({
             </div>
 
             {/* Paper Slip Image if attached */}
-            {order.receiptImageUrl && (
+            {order.receiptImageUrl && order.receiptImageUrl.trim() !== '' && (
               <div className="space-y-1.5">
                 <span className="text-[11px] font-extrabold text-amber-900 uppercase tracking-wider">
                   Paper Measurement Slip Photo
@@ -554,7 +554,7 @@ export const OrderStatusTracker: React.FC<OrderStatusTrackerProps> = ({
             {/* Payment Ledger */}
             <div className="p-3.5 bg-white rounded-2xl border border-slate-200 space-y-2 text-xs">
               <div className="flex justify-between font-bold text-slate-700">
-                <span>Stitching & Fabric Total</span>
+                <span>Order Total Value</span>
                 <span>₹{order.totalAmount}</span>
               </div>
               <div className="flex justify-between font-bold text-emerald-700">
@@ -600,7 +600,7 @@ export const OrderStatusTracker: React.FC<OrderStatusTrackerProps> = ({
       )}
 
       {/* Zoom Image Lightbox */}
-      {selectedZoomImage && (
+      {selectedZoomImage && selectedZoomImage.trim() !== '' && (
         <div
           className="fixed inset-0 bg-black/90 z-60 flex items-center justify-center p-4"
           onClick={(e) => {

@@ -214,22 +214,24 @@ export const OrderDeliveryModal: React.FC<OrderDeliveryModalProps> = ({
           {stitchedPhotos.length > 0 && (
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 pt-1">
               {stitchedPhotos.map((photo, idx) => (
-                <div key={idx} className="relative group rounded-xl overflow-hidden aspect-square border border-slate-200 bg-slate-100 shadow-2xs">
-                  <img
-                    src={photo}
-                    alt={`Stitched dress ${idx + 1}`}
-                    className="w-full h-full object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removePhoto(idx)}
-                    className="absolute top-1 right-1 p-1 bg-rose-600 text-white rounded-lg opacity-90 hover:opacity-100 cursor-pointer shadow-xs"
-                    title="Remove Photo"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </div>
+                photo && photo.trim() !== '' ? (
+                  <div key={idx} className="relative group rounded-xl overflow-hidden aspect-square border border-slate-200 bg-slate-100 shadow-2xs">
+                    <img
+                      src={photo}
+                      alt={`Stitched dress ${idx + 1}`}
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removePhoto(idx)}
+                      className="absolute top-1 right-1 p-1 bg-rose-600 text-white rounded-lg opacity-90 hover:opacity-100 cursor-pointer shadow-xs"
+                      title="Remove Photo"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : null
               ))}
             </div>
           )}

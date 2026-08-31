@@ -1,6 +1,6 @@
 {
-  "name": "ShopScopers Tailor CRM",
-  "description": "Offline-First Mobile CRM for Tailors built with Jetpack Compose design, Room DB local storage, and Firebase cloud sync.",
+  "name": "ShopScopers Boutique CRM",
+  "description": "Offline-First Mobile & Desktop CRM for Fashion Boutiques with multi-tenant Admin Panel (/admin), Room DB local storage, and Firebase cloud sync.",
   "requestFramePermissions": ["camera", "microphone", "geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

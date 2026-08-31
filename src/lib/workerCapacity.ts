@@ -159,10 +159,10 @@ export function calculateWorkerPerformances(
 ): WorkerPerformanceSummary[] {
   const mockNames = new Set(['master ramesh', 'rafiq bhai', 'suresh kumar', 'mohan lal']);
   const mockIds = new Set(['tailor-1', 'tailor-2', 'tailor-3', 'tailor-4', 't1', 't2', 't3', 't4']);
-  const staffList = tailors.filter((t) => !mockNames.has(t.name.toLowerCase()) && !mockIds.has(t.id));
+  const staffList = (tailors || []).filter((t) => !mockNames.has((t.name || '').toLowerCase()) && !mockIds.has(t.id));
 
   // Ensure Self (Owner) is present
-  if (!staffList.some((s) => s.role === 'Owner' || s.name.includes('Owner') || s.name.includes('Self'))) {
+  if (!staffList.some((s) => s.role === 'Owner' || (s.name && (s.name.includes('Owner') || s.name.includes('Self'))))) {
     staffList.unshift({
       id: 'tailor-owner',
       name: 'Self (Owner)',
@@ -175,9 +175,9 @@ export function calculateWorkerPerformances(
 
   return staffList.map((staff) => {
     // Active orders
-    const activeOrders = orders.filter((o) => {
+    const activeOrders = (orders || []).filter((o) => {
       if (o.isArchived || o.status === 'Completed' || o.status === 'Delivered') return false;
-      if (staff.role === 'Owner' || staff.name.includes('Owner') || staff.name.includes('Self')) {
+      if (staff.role === 'Owner' || (staff.name && (staff.name.includes('Owner') || staff.name.includes('Self')))) {
         return (
           o.assignedTailor === staff.name ||
           o.assignedTailor === 'Self (Owner)' ||
@@ -188,9 +188,9 @@ export function calculateWorkerPerformances(
     });
 
     // Completed orders historical audit
-    const completedOrders = orders.filter((o) => {
+    const completedOrders = (orders || []).filter((o) => {
       if (o.status !== 'Completed' && o.status !== 'Delivered') return false;
-      if (staff.role === 'Owner' || staff.name.includes('Owner') || staff.name.includes('Self')) {
+      if (staff.role === 'Owner' || (staff.name && (staff.name.includes('Owner') || staff.name.includes('Self')))) {
         return (
           o.assignedTailor === staff.name ||
           o.assignedTailor === 'Self (Owner)' ||

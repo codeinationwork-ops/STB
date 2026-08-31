@@ -1,7 +1,14 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore, getFirestore, Firestore, setLogLevel } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
+
+// Silence internal offline/reconnect console warnings
+try {
+  setLogLevel('silent');
+} catch {
+  // ignore
+}
 
 // Catch background database closing/hidden events when tabs or frames are hidden/closed
 if (typeof window !== 'undefined') {
@@ -12,10 +19,15 @@ if (typeof window !== 'undefined') {
       msg.includes('closing/hidden') ||
       msg.includes('indexeddb') ||
       msg.includes('database is closing/hidden') ||
-      msg.includes('failed to get document')
+      msg.includes('failed to get document') ||
+      msg.includes('could not reach cloud firestore') ||
+      msg.includes('the client is offline') ||
+      msg.includes('unavailable') ||
+      msg.includes("didn't respond within 10 seconds") ||
+      msg.includes('backend didn\'t respond')
     ) {
       event.preventDefault();
-      console.warn('Handled background database closing/hidden rejection gracefully:', event.reason);
+      // Handled gracefully in offline persistence mode
     }
   });
 
@@ -26,21 +38,29 @@ if (typeof window !== 'undefined') {
       msg.includes('closing/hidden') ||
       msg.includes('indexeddb') ||
       msg.includes('database is closing/hidden') ||
-      msg.includes('failed to get document')
+      msg.includes('failed to get document') ||
+      msg.includes('could not reach cloud firestore') ||
+      msg.includes('the client is offline') ||
+      msg.includes('unavailable') ||
+      msg.includes("didn't respond within 10 seconds") ||
+      msg.includes('backend didn\'t respond')
     ) {
       event.preventDefault();
-      console.warn('Handled background database closing/hidden error gracefully:', event.message);
+      // Handled gracefully in offline persistence mode
     }
   });
 }
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
-const dbId = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
-  ? firebaseConfig.firestoreDatabaseId
-  : undefined;
+let firestoreInstance: Firestore;
+try {
+  firestoreInstance = getFirestore(app);
+} catch {
+  firestoreInstance = initializeFirestore(app, {});
+}
 
-export const db = getFirestore(app, dbId);
+export const db = firestoreInstance;
 
 export const auth = getAuth(app);
 export default app;

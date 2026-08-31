@@ -55,6 +55,7 @@ import {
   formatFullReadableDate,
 } from './PromisedDateTimeInput';
 import { getWhatsAppUrl, clean10DigitPhone, formatDisplayPhone } from '../../lib/phoneUtils';
+import { useLanguage } from '../../lib/LanguageContext';
 
 interface Screen6AssignTimelineProps {
   order?: TailorOrder | null;
@@ -86,6 +87,7 @@ export const Screen6AssignTimeline: React.FC<Screen6AssignTimelineProps> = ({
   onSelectOrder,
   isDesktopView = false,
 }) => {
+  const { t } = useLanguage();
   const [allOrders, setAllOrders] = useState<TailorOrder[]>(() =>
     (propOrders.length > 0 ? propOrders : roomDb.getOrders()).map(checkAndEnrichOrderOverdue)
   );
@@ -269,40 +271,42 @@ export const Screen6AssignTimeline: React.FC<Screen6AssignTimelineProps> = ({
     <div className={`min-h-full bg-[#F8F9FA] text-slate-900 font-sans ${isDesktopView ? 'p-6' : 'pb-24'}`}>
       {/* Top Header */}
       {!isDesktopView ? (
-        <div className="bg-[#0B4636] text-white p-4 sticky top-0 z-20 shadow-md flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="bg-[#0B4636] text-white p-3.5 sticky top-0 z-20 shadow-md flex items-center justify-between">
+          <div className="flex items-center gap-2.5 min-w-0">
             <button
               onClick={onBack}
-              className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 transition-all text-white cursor-pointer"
+              className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 transition-all text-white cursor-pointer shrink-0"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <div>
-              <h1 className="text-base font-extrabold tracking-tight flex items-center gap-1.5">
-                <Scissors className="w-4 h-4 text-amber-400" />
-                <span>Assign & Workshop Timelines</span>
+            <div className="min-w-0">
+              <h1 className="text-sm font-extrabold tracking-tight flex items-center gap-1.5 truncate">
+                <Scissors className="w-4 h-4 text-amber-400 shrink-0" />
+                <span className="truncate">Workshop & Assign</span>
               </h1>
-              <p className="text-[10px] text-amber-300">Staff Workload, 8h Shifts & Live Process</p>
+              <p className="text-[10px] text-amber-300 truncate">Staff Workload & Timeline</p>
             </div>
           </div>
 
-          <button
-            onClick={() => setShowAddKarigarModal(true)}
-            className="bg-amber-400 hover:bg-amber-300 text-[#0B4636] px-3 py-1.5 rounded-xl font-black text-xs shadow flex items-center gap-1 cursor-pointer transition-all active:scale-95"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>Add Karigar</span>
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={() => setShowAddKarigarModal(true)}
+              className="bg-amber-400 hover:bg-amber-300 text-[#0B4636] px-2.5 py-1.5 rounded-xl font-black text-xs shadow flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Karigar</span>
+            </button>
+          </div>
         </div>
       ) : (
         <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-200">
           <div>
             <h1 className="text-2xl font-black text-slate-900 flex items-center gap-2.5">
               <Scissors className="w-7 h-7 text-[#0B4636]" />
-              <span>Workshop Assign & Karigar Capacity</span>
+              <span>{t('workshop.title', 'Workshop Assign & Karigar Capacity')}</span>
             </h1>
             <p className="text-xs text-slate-500 font-medium mt-1">
-              Live karigar task boards, 8-hour shift calendar, unassigned order dispatching, and piece-rate ledgers.
+              {t('workshop.subtitle', 'Live karigar task boards, 8-hour shift calendar, unassigned order dispatching, and piece-rate ledgers.')}
             </p>
           </div>
 
@@ -320,7 +324,7 @@ export const Screen6AssignTimeline: React.FC<Screen6AssignTimelineProps> = ({
               className="text-xs font-bold text-slate-600 hover:text-[#0B4636] flex items-center gap-1 bg-white px-3.5 py-2 rounded-xl border border-slate-200 shadow-sm cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4" />
-              <span>Back</span>
+              <span>{t('nav.backToDashboard', 'Back')}</span>
             </button>
           </div>
         </div>
@@ -519,10 +523,11 @@ export const Screen6AssignTimeline: React.FC<Screen6AssignTimelineProps> = ({
               const isExpanded = expandedKarigars[worker.tailorName] ?? true;
               const filteredWorkerOrders = worker.activeOrders.filter((o) => {
                 if (!searchQuery) return true;
+                const q = searchQuery.toLowerCase();
                 return (
-                  o.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                  o.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                  o.garmentType.toLowerCase().includes(searchQuery.toLowerCase())
+                  (o.customerName && o.customerName.toLowerCase().includes(q)) ||
+                  (o.id && o.id.toLowerCase().includes(q)) ||
+                  (o.garmentType && o.garmentType.toLowerCase().includes(q))
                 );
               });
 

@@ -11,6 +11,7 @@ import {
   RefreshCw,
   MoreVertical,
   ChevronRight,
+  ChevronDown,
   Clock,
   Filter,
   Check,
@@ -22,7 +23,6 @@ import {
   Eye,
   Plus,
   SlidersHorizontal,
-  ChevronDown,
   Copy,
   Camera,
   ShoppingBag,
@@ -33,6 +33,13 @@ import {
   Pause,
   Printer,
   Sparkles,
+  LayoutGrid,
+  Table as TableIcon,
+  Kanban,
+  User,
+  ArrowUpDown,
+  Layers,
+  Shirt,
 } from 'lucide-react';
 import {
   TailorOrder,
@@ -40,22 +47,26 @@ import {
   ShopProfile,
   PaymentMode,
   StaffTailor,
+  TailorCustomer,
 } from '../../types';
 import { OrderCompletedModal } from './OrderCompletedModal';
 import { OrderDeliveryModal } from './OrderDeliveryModal';
+import { OrderReceiptModal } from './OrderReceiptModal';
+import { ModernOrderPopups, ModernOrderPopupType } from './ModernOrderPopups';
 import {
   PromisedDateTimeInput,
   formatDisplayDate,
   formatDisplayTime,
-  formatFullReadableDate,
 } from './PromisedDateTimeInput';
 import { getWhatsAppUrl, clean10DigitPhone, formatDisplayPhone } from '../../lib/phoneUtils';
 import { roomDb } from '../../lib/localRoomDb';
+import { useLanguage } from '../../lib/LanguageContext';
 
 interface Screen5OrdersManagerProps {
   orders: TailorOrder[];
   shopProfile?: ShopProfile;
   tailors?: StaffTailor[];
+  existingCustomers?: TailorCustomer[];
   onBack: () => void;
   onSelectOrder: (order: TailorOrder) => void;
   onArchiveOrder: (orderId: string) => void;
@@ -71,16 +82,34 @@ interface Screen5OrdersManagerProps {
   ) => void;
   onAssignTimelineClick?: (order?: TailorOrder) => void;
   onNewOrderClick?: () => void;
+  onNewStitchClick?: () => void;
+  onNewAlterClick?: () => void;
+  onNewSaleClick?: () => void;
+  onNewAppointmentClick?: () => void;
+  onSaveOrder?: (order: TailorOrder) => void;
   initialTab?: 'all' | 'cutting' | 'stitching' | 'overdue' | 'completed' | 'archived';
   isDesktopView?: boolean;
 }
 
 type OrderTabFilter = 'all' | 'cutting' | 'stitching' | 'overdue' | 'completed' | 'archived';
+type ViewMode = 'table' | 'kanban' | 'cards';
+
+// Monday.com Status Palette Colors & Labels
+const MONDAY_STATUS_COLORS: Record<OrderStatus, { bg: string; text: string; label: string }> = {
+  'New / Cutting': { bg: 'bg-[#579bfc]', text: 'text-white', label: 'Cutting / New' },
+  'Assigned': { bg: 'bg-[#579bfc]', text: 'text-white', label: 'Assigned' },
+  'Stitching in Progress': { bg: 'bg-[#fdab3d]', text: 'text-white', label: 'Working on it' },
+  'Trial': { bg: 'bg-[#a25ddc]', text: 'text-white', label: 'Trial / Fitting' },
+  'In Alteration / Fitting': { bg: 'bg-[#a25ddc]', text: 'text-white', label: 'In Alteration' },
+  'Completed': { bg: 'bg-[#00c875]', text: 'text-white', label: 'Ready / Done' },
+  'Delivered': { bg: 'bg-[#008060]', text: 'text-white', label: 'Delivered' },
+};
 
 export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
   orders,
   shopProfile,
   tailors = [],
+  existingCustomers = [],
   onBack,
   onSelectOrder,
   onArchiveOrder,
@@ -90,15 +119,48 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
   onDeliverOrder,
   onAssignTimelineClick,
   onNewOrderClick,
+  onNewStitchClick,
+  onNewAlterClick,
+  onNewSaleClick,
+  onNewAppointmentClick,
+  onSaveOrder,
   initialTab = 'all',
   isDesktopView = false,
 }) => {
+  const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<OrderTabFilter>(initialTab);
+  const [viewMode, setViewMode] = useState<ViewMode>('table');
+  const [activePopupType, setActivePopupType] = useState<ModernOrderPopupType>(null);
+
+  // Sync tab when initialTab changes
+  useEffect(() => {
+    if (initialTab && initialTab !== activeTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
+
+  const handleTabChange = (tab: OrderTabFilter) => {
+    setActiveTab(tab);
+  };
+
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedTailorFilter, setSelectedTailorFilter] = useState<string>('ALL');
   const [selectedGarmentFilter, setSelectedGarmentFilter] = useState<string>('ALL');
-  const [sortBy, setSortBy] = useState<'due_soonest' | 'newest' | 'oldest' | 'balance_high' | 'overdue_most'>('due_soonest');
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<'ALL' | 'Stitch' | 'Alteration' | 'Sale'>('ALL');
+  const [sortBy, setSortBy] = useState<'newest' | 'due_soonest' | 'oldest' | 'balance_high' | 'overdue_most'>('newest');
   
+  // Collapsed group states
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({
+    'overdue': false,
+    'stitch': false,
+    'alteration': false,
+    'sale': false,
+    'completed': false,
+  });
+
+  const toggleGroup = (groupId: string) => {
+    setCollapsedGroups(prev => ({ ...prev, [groupId]: !prev[groupId] }));
+  };
+
   // Extension date modal state
   const [extendingOrderId, setExtendingOrderId] = useState<string | null>(null);
   const [newDueDate, setNewDueDate] = useState<string>(
@@ -113,42 +175,59 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
   const [slipModalOrder, setSlipModalOrder] = useState<TailorOrder | null>(null);
   const [expandedPhotoUrl, setExpandedPhotoUrl] = useState<string | null>(null);
   const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
-  const [openCardMenuId, setOpenCardMenuId] = useState<string | null>(null);
+  const [activeStatusMenuOrderId, setActiveStatusMenuOrderId] = useState<string | null>(null);
   const [playingVoiceOrderId, setPlayingVoiceOrderId] = useState<string | null>(null);
   const audioPlaybackRef = useRef<HTMLAudioElement | null>(null);
 
+  // Toast Feedback State
+  const [toastMsg, setToastMsg] = useState<{ id: string; text: string } | null>(null);
+
+  const showToast = (id: string, text: string) => {
+    setToastMsg({ id, text });
+    setTimeout(() => {
+      setToastMsg((curr) => (curr?.id === id ? null : curr));
+    }, 3000);
+  };
+
+  // 1-Click Action: Mark Ready (Completed)
+  const handleQuickMarkReady = async (order: TailorOrder, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await roomDb.updateOrderStatus(order.id, 'Completed');
+      if (onUpdateStatus) {
+        onUpdateStatus(order.id, 'Completed');
+      }
+      showToast(order.id, 'Marked as Ready! 🎉');
+    } catch (err) {
+      console.error('Failed to mark order as Ready:', err);
+    }
+  };
+
+  // 1-Click Action: Mark Delivered (Auto-settles any remaining balance)
+  const handleQuickMarkDelivered = async (order: TailorOrder, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const settledAmount = order.balanceDue;
+      await roomDb.updateOrderStatus(order.id, 'Delivered');
+      if (onUpdateStatus) {
+        onUpdateStatus(order.id, 'Delivered');
+      }
+      showToast(
+        order.id,
+        settledAmount > 0
+          ? `Delivered & Settled ₹${settledAmount.toLocaleString('en-IN')} Due! ✅`
+          : 'Order Delivered! ✅'
+      );
+    } catch (err) {
+      console.error('Failed to mark order as Delivered:', err);
+    }
+  };
   // Active vs Archived orders
   const activeOrders = useMemo(() => orders.filter((o) => !o.isArchived), [orders]);
   const archivedOrders = useMemo(() => orders.filter((o) => o.isArchived), [orders]);
 
-  // Specific groups
-  const overdueOrders = useMemo(() => activeOrders.filter((o) => o.isOverdue), [activeOrders]);
-  const cuttingOrders = useMemo(() => activeOrders.filter((o) => o.status === 'New / Cutting'), [activeOrders]);
-  const stitchingOrders = useMemo(
-    () => activeOrders.filter((o) => o.status === 'Stitching in Progress' || o.status === 'Trial'),
-    [activeOrders]
-  );
-  const completedOrders = useMemo(
-    () => activeOrders.filter((o) => o.status === 'Completed' || o.status === 'Delivered'),
-    [activeOrders]
-  );
-
-  // Get unique tailors and garments for filters
-  const uniqueTailors = useMemo(() => {
-    const set = new Set<string>();
-    orders.forEach((o) => {
-      if (o.assignedTailor) set.add(o.assignedTailor);
-    });
-    return Array.from(set);
-  }, [orders]);
-
-  const uniqueGarments = useMemo(() => {
-    const set = new Set<string>();
-    orders.forEach((o) => {
-      if (o.garmentType) set.add(o.garmentType);
-    });
-    return Array.from(set);
-  }, [orders]);
+  // Overdue count
+  const overdueCount = useMemo(() => activeOrders.filter((o) => o.isOverdue).length, [activeOrders]);
 
   // Tab-filtered base list
   const tabFilteredOrders = useMemo(() => {
@@ -156,49 +235,83 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
       case 'all':
         return activeOrders;
       case 'cutting':
-        return cuttingOrders;
+        return activeOrders.filter((o) => o.status === 'New / Cutting');
       case 'stitching':
-        return stitchingOrders;
+        return activeOrders.filter((o) => o.status === 'Stitching in Progress' || o.status === 'Trial');
       case 'overdue':
-        return overdueOrders;
+        return activeOrders.filter((o) => o.isOverdue);
       case 'completed':
-        return completedOrders;
+        return activeOrders.filter((o) => o.status === 'Completed' || o.status === 'Delivered');
       case 'archived':
         return archivedOrders;
       default:
         return activeOrders;
     }
-  }, [activeTab, activeOrders, cuttingOrders, stitchingOrders, overdueOrders, completedOrders, archivedOrders]);
+  }, [activeTab, activeOrders, archivedOrders]);
 
   // Search and dropdown filters
   const filteredOrders = useMemo(() => {
     return tabFilteredOrders.filter((o) => {
+      const q = (searchQuery || '').toLowerCase();
       const matchesSearch =
-        o.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        o.customerPhone.includes(searchQuery) ||
-        o.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        o.garmentType.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (o.assignedTailor && o.assignedTailor.toLowerCase().includes(searchQuery.toLowerCase()));
+        !q ||
+        Boolean(o.customerName && typeof o.customerName === 'string' && o.customerName.toLowerCase().includes(q)) ||
+        Boolean(o.customerPhone && typeof o.customerPhone === 'string' && o.customerPhone.includes(searchQuery)) ||
+        Boolean(o.id && typeof o.id === 'string' && o.id.toLowerCase().includes(q)) ||
+        Boolean(o.garmentType && typeof o.garmentType === 'string' && o.garmentType.toLowerCase().includes(q));
 
-      const matchesTailor = selectedTailorFilter === 'ALL' || o.assignedTailor === selectedTailorFilter;
       const matchesGarment = selectedGarmentFilter === 'ALL' || o.garmentType === selectedGarmentFilter;
+      const matchesCategory =
+        selectedCategoryFilter === 'ALL' ||
+        (selectedCategoryFilter === 'Stitch' && (o.orderCategory === 'Stitch' || o.orderCategory === 'New Stitch' || !o.orderCategory)) ||
+        (selectedCategoryFilter === 'Alteration' && (o.orderCategory === 'Alteration' || o.orderCategory === 'Repair')) ||
+        (selectedCategoryFilter === 'Sale' && o.orderCategory === 'Sale');
 
-      return matchesSearch && matchesTailor && matchesGarment;
+      return matchesSearch && matchesGarment && matchesCategory;
     });
-  }, [tabFilteredOrders, searchQuery, selectedTailorFilter, selectedGarmentFilter]);
+  }, [tabFilteredOrders, searchQuery, selectedGarmentFilter, selectedCategoryFilter]);
+
+  // Helper to extract numerical timestamp for sorting
+  const getOrderTimestamp = (order: TailorOrder): number => {
+    if ((order as any).createdAt) {
+      const t = new Date((order as any).createdAt).getTime();
+      if (!isNaN(t) && t > 0) return t;
+    }
+    if (order.createdDate) {
+      const dateTimeStr = order.createdTime ? `${order.createdDate}T${order.createdTime}` : order.createdDate;
+      const t = new Date(dateTimeStr).getTime();
+      if (!isNaN(t) && t > 0) return t;
+    }
+    if (order.updatedAt) {
+      const t = new Date(order.updatedAt).getTime();
+      if (!isNaN(t) && t > 0) return t;
+    }
+    if (order.id) {
+      const match = order.id.match(/\d+/g);
+      if (match) {
+        const num = parseInt(match.join(''), 10);
+        if (!isNaN(num)) return num;
+      }
+    }
+    return 0;
+  };
 
   // Sorting
   const sortedOrders = useMemo(() => {
     const list = [...filteredOrders];
     list.sort((a, b) => {
-      if (sortBy === 'due_soonest') {
-        return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
-      }
       if (sortBy === 'newest') {
-        return new Date(b.createdDate || 0).getTime() - new Date(a.createdDate || 0).getTime();
+        const timeDiff = getOrderTimestamp(b) - getOrderTimestamp(a);
+        if (timeDiff !== 0) return timeDiff;
+        return (b.id || '').localeCompare(a.id || '');
       }
       if (sortBy === 'oldest') {
-        return new Date(a.createdDate || 0).getTime() - new Date(b.createdDate || 0).getTime();
+        const timeDiff = getOrderTimestamp(a) - getOrderTimestamp(b);
+        if (timeDiff !== 0) return timeDiff;
+        return (a.id || '').localeCompare(b.id || '');
+      }
+      if (sortBy === 'due_soonest') {
+        return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
       }
       if (sortBy === 'balance_high') {
         return b.balanceDue - a.balanceDue;
@@ -211,28 +324,48 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
     return list;
   }, [filteredOrders, sortBy]);
 
-  // Total balance in current filtered view
-  const totalBalanceDue = useMemo(() => {
-    return tabFilteredOrders.reduce((sum, o) => sum + (o.balanceDue || 0), 0);
-  }, [tabFilteredOrders]);
+  // Grouping for Monday.com Tables
+  const groupedOrders = useMemo(() => {
+    const overdueList = sortedOrders.filter((o) => o.isOverdue && o.status !== 'Delivered');
+    const stitchList = sortedOrders.filter((o) => 
+      (!o.isOverdue || o.status === 'Delivered') && 
+      (o.status !== 'Completed' && o.status !== 'Delivered') && 
+      (o.orderCategory === 'Stitch' || o.orderCategory === 'New Stitch' || !o.orderCategory)
+    );
+    const alterationList = sortedOrders.filter((o) => 
+      (!o.isOverdue || o.status === 'Delivered') && 
+      (o.status !== 'Completed' && o.status !== 'Delivered') && 
+      (o.orderCategory === 'Alteration' || o.orderCategory === 'Repair')
+    );
+    const saleList = sortedOrders.filter((o) => 
+      (!o.isOverdue || o.status === 'Delivered') && 
+      (o.status !== 'Completed' && o.status !== 'Delivered') && 
+      (o.orderCategory === 'Sale')
+    );
+    const completedList = sortedOrders.filter((o) => 
+      o.status === 'Completed' || o.status === 'Delivered'
+    );
 
-  const getStageIndex = (status: OrderStatus): number => {
-    switch (status) {
-      case 'New / Cutting':
-        return 0;
-      case 'Assigned':
-        return 1;
-      case 'Stitching in Progress':
-      case 'Trial':
-        return 2;
-      case 'Completed':
-        return 3;
-      case 'Delivered':
-        return 4;
-      default:
-        return 0;
-    }
-  };
+    return {
+      overdue: overdueList,
+      stitch: stitchList,
+      alteration: alterationList,
+      sale: saleList,
+      completed: completedList,
+    };
+  }, [sortedOrders]);
+
+  // Financial aggregates
+  const totalRevenue = useMemo(() => orders.reduce((sum, o) => sum + (o.totalAmount || 0), 0), [orders]);
+  const totalBalanceDue = useMemo(() => sortedOrders.reduce((sum, o) => sum + (o.balanceDue || 0), 0), [sortedOrders]);
+
+  const uniqueGarments = useMemo(() => {
+    const set = new Set<string>();
+    orders.forEach((o) => {
+      if (o.garmentType) set.add(o.garmentType);
+    });
+    return Array.from(set);
+  }, [orders]);
 
   const handleToggleVoicePlay = (order: TailorOrder, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -252,7 +385,7 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
       audioPlaybackRef.current = audio;
       setPlayingVoiceOrderId(order.id);
       audio.play().catch((err) => {
-        console.warn('Audio playback not allowed or failed:', err);
+        console.warn('Audio playback error:', err);
       });
       audio.onended = () => {
         setPlayingVoiceOrderId(null);
@@ -275,6 +408,7 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
   }, []);
 
   const handleStatusChangeRequest = (order: TailorOrder, targetStatus: OrderStatus) => {
+    setActiveStatusMenuOrderId(null);
     if (targetStatus === 'Assigned') {
       if (onAssignTimelineClick) {
         onAssignTimelineClick(order);
@@ -321,999 +455,997 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
     setTimeout(() => setCopiedOrderId(null), 2000);
   };
 
-  return (
-    <div className={`min-h-full bg-[#F8F9FA] text-slate-900 font-sans ${isDesktopView ? 'p-6' : 'pb-24'}`}>
-      {/* Top Header Navigation (Mobile Only) */}
-      {!isDesktopView ? (
-        <div className="bg-[#0B4636] text-white p-4 sticky top-0 z-20 shadow-md flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onBack}
-              className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 transition-all text-white cursor-pointer"
+  const formatDueDisplay = (dateStr: string) => {
+    if (!dateStr) return '';
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  // Render a Single Table Group
+  const renderMondayTableGroup = (
+    groupId: string,
+    title: string,
+    icon: string,
+    colorHex: string,
+    orderList: TailorOrder[],
+    emptyMessage: string
+  ) => {
+    if (orderList.length === 0 && (groupId === 'overdue' || searchQuery)) return null;
+
+    const isCollapsed = collapsedGroups[groupId];
+    const groupTotal = orderList.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+    const groupBalance = orderList.reduce((sum, o) => sum + (o.balanceDue || 0), 0);
+    const groupAdvance = orderList.reduce((sum, o) => sum + (o.advancePaid || 0), 0);
+
+    const getStatusBadgeStyle = (status: OrderStatus) => {
+      switch (status) {
+        case 'Completed':
+          return {
+            label: 'Ready for Pickup',
+            bg: 'bg-emerald-50 text-emerald-800 border-emerald-300',
+            dot: 'bg-emerald-500',
+          };
+        case 'Delivered':
+          return {
+            label: 'Delivered',
+            bg: 'bg-teal-50 text-teal-800 border-teal-300',
+            dot: 'bg-teal-500',
+          };
+        case 'Trial':
+          return {
+            label: 'Trial & Fitting',
+            bg: 'bg-purple-50 text-purple-800 border-purple-300',
+            dot: 'bg-purple-500',
+          };
+        case 'In Alteration / Fitting':
+          return {
+            label: 'In Alteration',
+            bg: 'bg-purple-50 text-purple-800 border-purple-300',
+            dot: 'bg-purple-500',
+          };
+        case 'Stitching in Progress':
+          return {
+            label: 'Stitching',
+            bg: 'bg-amber-50 text-amber-900 border-amber-300',
+            dot: 'bg-amber-500 animate-pulse',
+          };
+        case 'New / Cutting':
+          return {
+            label: 'New / Cutting',
+            bg: 'bg-sky-50 text-sky-800 border-sky-300',
+            dot: 'bg-sky-500',
+          };
+        case 'Assigned':
+        default:
+          return {
+            label: status,
+            bg: 'bg-indigo-50 text-indigo-800 border-indigo-300',
+            dot: 'bg-indigo-500',
+          };
+      }
+    };
+
+    return (
+      <div key={groupId} className="mb-5 rounded-2xl bg-white shadow-xs border border-slate-200 overflow-hidden">
+        {/* Group Header Bar */}
+        <div 
+          onClick={() => toggleGroup(groupId)}
+          className="px-4 py-2.5 flex items-center justify-between cursor-pointer hover:bg-slate-50/90 transition-colors border-b border-slate-200 select-none bg-slate-50/50"
+        >
+          <div className="flex items-center gap-2.5">
+            <button 
+              type="button" 
+              className="p-1 rounded-md text-slate-500 hover:bg-slate-200/80 transition-colors"
+              style={{ color: colorHex }}
             >
-              <ArrowLeft className="w-5 h-5" />
+              <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`} />
             </button>
+            <span className="text-lg leading-none">{icon}</span>
+            <h3 className="font-extrabold text-xs sm:text-sm tracking-tight text-slate-900">
+              {title}
+            </h3>
+            <span className="text-[11px] font-bold text-slate-600 bg-white border border-slate-200 px-2.5 py-0.5 rounded-full shadow-2xs">
+              {orderList.length} {orderList.length === 1 ? 'order' : 'orders'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2.5 text-xs font-semibold">
+            <span className="hidden sm:inline text-slate-600">Total: <strong className="text-slate-900 font-bold font-mono">₹{groupTotal.toLocaleString('en-IN')}</strong></span>
+            {groupBalance > 0 ? (
+              <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200 text-[10px] font-bold">
+                Due: ₹{groupBalance.toLocaleString('en-IN')}
+              </span>
+            ) : (
+              <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 text-[10px] font-bold hidden sm:inline-block">
+                ✓ Fully Settled
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Group Content Body */}
+        {!isCollapsed && (
+          <div>
+            {/* ================= DESKTOP TABLE VIEW (md+) ================= */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                {/* Header Row */}
+                <thead>
+                  <tr className="bg-slate-50/80 text-slate-500 font-extrabold uppercase text-[10px] tracking-wider border-b border-slate-200 select-none">
+                    <th className="w-10 px-3 py-2.5 text-center border-r border-slate-200/80">
+                      <input type="checkbox" className="rounded border-slate-300 text-emerald-700 focus:ring-0 cursor-pointer" />
+                    </th>
+                    <th className="px-3.5 py-2.5 min-w-[240px] border-r border-slate-200/80">Customer / Order</th>
+                    <th className="px-3 py-2.5 min-w-[150px] text-center border-r border-slate-200/80">Status</th>
+                    <th className="px-3 py-2.5 min-w-[110px] border-r border-slate-200/80">Promised Date</th>
+                    <th className="px-3 py-2.5 min-w-[85px] text-right border-r border-slate-200/80">Total (₹)</th>
+                    <th className="px-3 py-2.5 min-w-[85px] text-right border-r border-slate-200/80">Advance (₹)</th>
+                    <th className="px-3 py-2.5 min-w-[90px] text-right border-r border-slate-200/80">Balance (₹)</th>
+                    <th className="px-3 py-2.5 min-w-[170px] text-center">Ready / Deliver Actions</th>
+                  </tr>
+                </thead>
+
+                {/* Rows */}
+                <tbody className="divide-y divide-slate-100">
+                  {orderList.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-6 text-center text-xs text-slate-400">
+                        {emptyMessage}
+                      </td>
+                    </tr>
+                  ) : (
+                    orderList.map((order) => {
+                      const statusStyle = getStatusBadgeStyle(order.status);
+                      const isVoicePlaying = playingVoiceOrderId === order.id;
+                      const isSale = order.orderCategory === 'Sale';
+                      const isAlteration = order.orderCategory === 'Alteration';
+                      const catLabel = isSale ? 'Sale' : isAlteration ? 'Alter' : 'Stitch';
+                      const catBg = isSale
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : isAlteration
+                        ? 'bg-purple-50 text-purple-700 border-purple-200'
+                        : 'bg-emerald-50 text-emerald-800 border-emerald-200';
+
+                      const initials = order.customerName
+                        ? order.customerName
+                            .split(' ')
+                            .filter(Boolean)
+                            .slice(0, 2)
+                            .map((w) => w[0].toUpperCase())
+                            .join('')
+                        : 'C';
+
+                      const cleanPhone = order.customerPhone ? order.customerPhone.replace(/\D/g, '') : '';
+                      const intlPhone = cleanPhone.startsWith('91') ? cleanPhone : `91${cleanPhone}`;
+                      const whatsappUrl = getWhatsAppUrl(
+                        intlPhone,
+                        `Hello ${order.customerName}, update regarding your order #${order.id} (${order.garmentType || 'Garment'}) from ${shopProfile?.shopName || 'our shop'}: Status: ${order.status}, Due: ${order.dueDate}, Total: ₹${order.totalAmount}, Balance: ₹${order.balanceDue}.`
+                      );
+
+                      return (
+                        <tr 
+                          key={order.id} 
+                          className="h-11 hover:bg-slate-50/90 transition-colors group cursor-pointer"
+                          onClick={() => setReceiptModalOrder(order)}
+                        >
+                          {/* Checkbox Column with Group Left Border Indicator */}
+                          <td 
+                            className="px-3 py-1.5 text-center border-r border-slate-100 relative"
+                            style={{ borderLeft: `4px solid ${colorHex}` }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <input type="checkbox" className="rounded border-slate-300 text-emerald-700 focus:ring-0 cursor-pointer" />
+                          </td>
+
+                          {/* Customer / Order Column */}
+                          <td className="px-3.5 py-1.5 border-r border-slate-100">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-7 h-7 rounded-full bg-slate-100 border border-slate-200 text-[#0B4636] flex items-center justify-center text-[10px] font-black shrink-0 shadow-2xs">
+                                {initials}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 flex-nowrap">
+                                  <span className="font-bold text-slate-900 truncate group-hover:text-emerald-800 transition-colors text-xs">
+                                    {order.customerName}
+                                  </span>
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
+                                    {order.id}
+                                  </span>
+                                  <span className={`px-1.5 py-0.2 rounded text-[9px] font-extrabold border shrink-0 ${catBg}`}>
+                                    {catLabel}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium mt-0.5 truncate">
+                                  <span className="text-slate-800 font-semibold truncate">
+                                    {isSale ? '🛍️' : isAlteration ? '✂️' : '🧵'} {order.garmentType || 'Garment'}
+                                  </span>
+                                  {order.customerPhone && (
+                                    <>
+                                      <span className="text-slate-300">•</span>
+                                      <span className="font-mono text-[10px] text-slate-500">{order.customerPhone}</span>
+                                    </>
+                                  )}
+                                  {order.voiceNoteUrl && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleToggleVoicePlay(order, e)}
+                                      className={`px-1 py-0.2 rounded text-[9px] font-bold flex items-center gap-0.5 shrink-0 border ${
+                                        isVoicePlaying
+                                          ? 'bg-purple-600 text-white border-purple-600 animate-pulse'
+                                          : 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+                                      }`}
+                                      title="Play Voice Audio Note"
+                                    >
+                                      {isVoicePlaying ? <Pause className="w-2.5 h-2.5" /> : <Play className="w-2.5 h-2.5" />}
+                                      <span>Audio</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+
+                          {/* Status Column (Modern Rounded Pill with Dropdown Trigger) */}
+                          <td className="px-3 py-1.5 border-r border-slate-100 text-center relative" onClick={(e) => e.stopPropagation()}>
+                            <button 
+                              type="button" 
+                              onClick={() => setActiveStatusMenuOrderId(activeStatusMenuOrderId === order.id ? null : order.id)}
+                              className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full border shadow-2xs transition-all hover:scale-102 cursor-pointer ${statusStyle.bg}`}
+                            >
+                              <span className={`w-2 h-2 rounded-full ${statusStyle.dot} shrink-0`} />
+                              <span className="truncate max-w-[100px]">{statusStyle.label}</span>
+                              <ChevronDown className="w-2.5 h-2.5 opacity-60 ml-0.5" />
+                            </button>
+
+                            {/* Status Picker Popup */}
+                            {activeStatusMenuOrderId === order.id && (
+                              <div className="absolute z-50 top-full left-1/2 -translate-x-1/2 mt-1 w-48 bg-white rounded-xl shadow-xl border border-slate-200 p-1.5 space-y-1 animate-in fade-in zoom-in-95 duration-100">
+                                <div className="text-[10px] font-extrabold text-slate-400 uppercase px-2 py-0.5 tracking-wider">Change Status</div>
+                                {(['New / Cutting', 'Stitching in Progress', 'Trial', 'Completed', 'Delivered'] as OrderStatus[]).map((st) => {
+                                  const cfg = getStatusBadgeStyle(st);
+                                  return (
+                                    <button
+                                      key={st}
+                                      type="button"
+                                      onClick={() => handleStatusChangeRequest(order, st)}
+                                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-bold ${cfg.bg} border flex items-center justify-between cursor-pointer hover:brightness-95 transition-all`}
+                                    >
+                                      <div className="flex items-center gap-1.5">
+                                        <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+                                        <span>{cfg.label}</span>
+                                      </div>
+                                      {order.status === st && <Check className="w-3 h-3" />}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Promised Date Column */}
+                          <td className="px-3 py-1.5 border-r border-slate-100">
+                            <div className="flex items-center gap-1.5">
+                              <Calendar className={`w-3.5 h-3.5 ${order.isOverdue ? 'text-rose-600' : 'text-slate-400'} shrink-0`} />
+                              <span className={`text-[11px] font-semibold ${order.isOverdue ? 'text-rose-600 font-bold' : 'text-slate-700'}`}>
+                                {formatDueDisplay(order.dueDate)}
+                              </span>
+                              {order.isOverdue && (
+                                <span className="px-1 py-0.2 rounded text-[9px] font-black bg-rose-600 text-white animate-pulse">
+                                  LATE
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Total Amount (₹) */}
+                          <td className="px-3 py-1.5 text-right font-black font-mono text-slate-900 border-r border-slate-100 text-xs">
+                            ₹{order.totalAmount.toLocaleString('en-IN')}
+                          </td>
+
+                          {/* Advance Paid (₹) */}
+                          <td className="px-3 py-1.5 text-right text-slate-600 border-r border-slate-100 font-mono text-[11px]">
+                            ₹{order.advancePaid.toLocaleString('en-IN')}
+                          </td>
+
+                          {/* Balance Due (₹) */}
+                          <td className="px-3 py-1.5 text-right border-r border-slate-100">
+                            {order.balanceDue > 0 ? (
+                              <span className="font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200 text-[10px] font-mono">
+                                ₹{order.balanceDue.toLocaleString('en-IN')}
+                              </span>
+                            ) : (
+                              <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 font-bold text-[10px]">
+                                Paid
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Actions Column */}
+                          <td className="px-2 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center justify-center gap-1 flex-nowrap">
+                              {/* Toast Notification Inline when updated */}
+                              {toastMsg?.id === order.id ? (
+                                <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 animate-pulse">
+                                  {toastMsg.text}
+                                </span>
+                              ) : (
+                                <>
+                                  {/* Ready Button */}
+                                  {order.status !== 'Completed' && order.status !== 'Delivered' && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleQuickMarkReady(order, e)}
+                                      className="h-6.5 px-2 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold flex items-center gap-0.5 shadow-2xs cursor-pointer active:scale-95 transition-all whitespace-nowrap"
+                                      title="Mark Ready to Deliver (Completed)"
+                                    >
+                                      <Check className="w-2.5 h-2.5 stroke-[3]" />
+                                      <span>Ready</span>
+                                    </button>
+                                  )}
+
+                                  {/* Deliver Button */}
+                                  {order.status !== 'Delivered' && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleQuickMarkDelivered(order, e)}
+                                      className="h-6.5 px-2 rounded-md bg-teal-700 hover:bg-teal-800 text-white text-[10px] font-bold flex items-center gap-0.5 shadow-2xs cursor-pointer active:scale-95 transition-all whitespace-nowrap"
+                                      title="Mark Delivered (Auto-settles balance)"
+                                    >
+                                      <span>Deliver</span>
+                                    </button>
+                                  )}
+
+                                  {order.customerPhone && (
+                                    <a
+                                      href={whatsappUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="h-6.5 w-6.5 rounded-md bg-[#25D366] hover:bg-[#1faa4b] text-white flex items-center justify-center shadow-2xs transition-transform hover:scale-105"
+                                      title="Send WhatsApp Update"
+                                    >
+                                      <MessageSquare className="w-3 h-3 fill-white" />
+                                    </a>
+                                  )}
+
+                                  {order.customerPhone && (
+                                    <a
+                                      href={`tel:${order.customerPhone}`}
+                                      className="h-6.5 w-6.5 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors"
+                                      title="Call Customer"
+                                    >
+                                      <Phone className="w-3 h-3" />
+                                    </a>
+                                  )}
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setReceiptModalOrder(order)}
+                                    className="h-6.5 w-6.5 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center transition-colors"
+                                    title="View Bill / Receipt"
+                                  >
+                                    <FileText className="w-3 h-3" />
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setReceiptModalOrder(order)}
+                                    className="h-6.5 px-2 rounded-md bg-[#0B4636] hover:bg-[#073024] text-amber-300 flex items-center justify-center gap-1 transition-all hover:scale-105 shadow-2xs font-bold text-xs"
+                                    title="View Order Receipt Slip"
+                                  >
+                                    <span>Receipt</span>
+                                    <ChevronRight className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+
+                  {/* + Add Order Row */}
+                  {onNewOrderClick && (
+                    <tr className="h-9 hover:bg-slate-50/80 transition-colors">
+                      <td colSpan={8} className="px-3.5 py-1">
+                        <button
+                          type="button"
+                          onClick={onNewOrderClick}
+                          className="text-xs font-bold text-emerald-800 hover:text-emerald-900 flex items-center gap-1.5 cursor-pointer py-1 px-2 rounded-md hover:bg-emerald-50 transition-colors"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>+ Add Order to this group</span>
+                        </button>
+                      </td>
+                    </tr>
+                  )}
+
+                  {/* Summary / Calculation Row */}
+                  <tr className="bg-slate-50/90 text-slate-700 font-bold text-[11px] border-t border-slate-200 select-none">
+                    <td className="px-3 py-2 text-center border-r border-slate-200 text-slate-400">∑</td>
+                    <td className="px-3.5 py-2 border-r border-slate-200 text-slate-600 font-medium">
+                      {orderList.length} items
+                    </td>
+                    <td className="px-3 py-2 border-r border-slate-200"></td>
+                    <td className="px-3 py-2 border-r border-slate-200"></td>
+                    <td className="px-3 py-2 text-right text-slate-900 border-r border-slate-200 font-mono font-black">
+                      ₹{groupTotal.toLocaleString('en-IN')}
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-600 border-r border-slate-200 font-mono">
+                      ₹{groupAdvance.toLocaleString('en-IN')}
+                    </td>
+                    <td className="px-3 py-2 text-right border-r border-slate-200 font-mono">
+                      <span className={groupBalance > 0 ? 'text-rose-700' : 'text-emerald-700'}>
+                        ₹{groupBalance.toLocaleString('en-IN')}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2"></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* ================= MOBILE VIEW (< md) ================= */}
+            <div className="block md:hidden divide-y-2 divide-slate-100">
+              {orderList.length === 0 ? (
+                <div className="py-6 text-center text-xs text-slate-400">
+                  {emptyMessage}
+                </div>
+              ) : (
+                orderList.map((order) => {
+                  const statusStyle = getStatusBadgeStyle(order.status);
+                  const isSale = order.orderCategory === 'Sale';
+                  const isAlteration = order.orderCategory === 'Alteration';
+                  const catLabel = isSale ? 'Sale' : isAlteration ? 'Alter' : 'Stitch';
+                  const catBg = isSale
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : isAlteration
+                    ? 'bg-purple-50 text-purple-700 border-purple-200'
+                    : 'bg-blue-50 text-blue-700 border-blue-200';
+
+                  const cleanPhone = order.customerPhone ? order.customerPhone.replace(/\D/g, '') : '';
+                  const intlPhone = cleanPhone.startsWith('91') ? cleanPhone : `91${cleanPhone}`;
+                  const whatsappUrl = getWhatsAppUrl(
+                    intlPhone,
+                    `Hello ${order.customerName}, update regarding order #${order.id}: Status: ${order.status}, Balance Due: ₹${order.balanceDue}.`
+                  );
+
+                  return (
+                    <div
+                      key={order.id}
+                      onClick={() => onSelectOrder(order)}
+                      className="p-3.5 space-y-2.5 hover:bg-slate-50 transition-colors cursor-pointer relative"
+                      style={{ borderLeft: `4px solid ${colorHex}` }}
+                    >
+                      {/* Top Row: Order ID, Category, Status Badge */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[11px] font-mono font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
+                            {order.id}
+                          </span>
+                          <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded-md border ${catBg}`}>
+                            {catLabel}
+                          </span>
+                          {order.isOverdue && (
+                            <span className="px-1.5 py-0.5 bg-rose-600 text-white text-[9px] font-black rounded shadow-2xs animate-pulse">
+                              LATE
+                            </span>
+                          )}
+                        </div>
+
+                        <span
+                          className={`inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-full border shadow-2xs ${statusStyle.bg}`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${statusStyle.dot} shrink-0`} />
+                          <span>{statusStyle.label}</span>
+                        </span>
+                      </div>
+
+                      {/* Middle Row: Garment & Customer */}
+                      <div className="flex items-start justify-between gap-3 pt-1 border-t border-slate-100">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-bold text-slate-900 truncate flex items-center gap-1.5">
+                            <span>{isSale ? '🛍️' : isAlteration ? '✂️' : '🧵'}</span>
+                            <span className="truncate">{order.garmentType || 'Garment Item'}</span>
+                          </div>
+                          <div className="text-xs text-slate-600 font-medium flex items-center gap-1.5 mt-0.5 truncate">
+                            <span className="font-semibold text-slate-800 truncate">{order.customerName}</span>
+                            {order.customerPhone && (
+                              <>
+                                <span className="text-slate-300">•</span>
+                                <span className="font-mono text-slate-500 text-[11px]">{order.customerPhone}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Amount & Settlement */}
+                        <div className="text-right shrink-0">
+                          <div className="text-sm font-black font-mono text-slate-900">
+                            ₹{order.totalAmount.toLocaleString('en-IN')}
+                          </div>
+                          {order.balanceDue > 0 ? (
+                            <div className="text-[10px] font-bold text-rose-700 bg-rose-50 px-1.5 py-0.2 rounded border border-rose-200">
+                              Due: ₹{order.balanceDue.toLocaleString('en-IN')}
+                            </div>
+                          ) : (
+                            <div className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                              ✓ Paid Full
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Bottom Row: Delivery date & Actions */}
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                        <div className="flex items-center gap-2 text-slate-600 text-[11px]">
+                          <span className="flex items-center gap-1 font-semibold text-slate-700">
+                            <Calendar className={`w-3 h-3 ${order.isOverdue ? 'text-rose-600' : 'text-slate-400'}`} />
+                            {formatDueDisplay(order.dueDate)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          {order.customerPhone && (
+                            <a
+                              href={whatsappUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="h-7 w-7 rounded-lg bg-[#25D366] hover:bg-[#1faa4b] text-white flex items-center justify-center shadow-xs"
+                              title="WhatsApp"
+                            >
+                              <MessageSquare className="w-3.5 h-3.5 fill-white" />
+                            </a>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setReceiptModalOrder(order)}
+                            className="h-7 w-7 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center"
+                            title="Bill"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setReceiptModalOrder(order)}
+                            className="h-7 px-2.5 rounded-lg bg-[#0B4636] text-amber-300 text-xs font-bold flex items-center gap-1 shadow-xs"
+                          >
+                            <span>Receipt</span>
+                            <ChevronRight className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+
+              {/* Mobile Summary */}
+              <div className="p-3 bg-slate-50 text-slate-700 font-bold text-xs flex items-center justify-between border-t border-slate-200">
+                <span>{orderList.length} items</span>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono">Total: ₹{groupTotal.toLocaleString('en-IN')}</span>
+                  {groupBalance > 0 && (
+                    <span className="text-rose-700 font-mono">Due: ₹{groupBalance.toLocaleString('en-IN')}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Render Kanban Board View
+  const renderKanbanView = () => {
+    const columns: { status: OrderStatus; label: string; color: string }[] = [
+      { status: 'New / Cutting', label: 'Cutting / New', color: '#579bfc' },
+      { status: 'Stitching in Progress', label: 'Stitching', color: '#fdab3d' },
+      { status: 'Trial', label: 'Trial & Fitting', color: '#a25ddc' },
+      { status: 'Completed', label: 'Completed / Ready', color: '#00c875' },
+      { status: 'Delivered', label: 'Delivered', color: '#008060' },
+    ];
+
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3.5 pb-6 overflow-x-auto">
+        {columns.map((col) => {
+          const colOrders = sortedOrders.filter((o) => o.status === col.status);
+          const colTotal = colOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+
+          return (
+            <div key={col.status} className="bg-[#f0f3f7] rounded-lg p-2.5 border border-[#d0d4e4] flex flex-col min-h-[500px]">
+              {/* Column Header */}
+              <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#d0d4e4]">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: col.color }} />
+                  <h4 className="font-bold text-xs text-slate-800">{col.label}</h4>
+                  <span className="text-[10px] font-bold bg-white text-slate-600 px-1.5 py-0.2 rounded-full shadow-2xs">
+                    {colOrders.length}
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold text-slate-500">₹{colTotal.toLocaleString('en-IN')}</span>
+              </div>
+
+              {/* Cards List */}
+              <div className="space-y-2 flex-1 overflow-y-auto max-h-[70vh]">
+                {colOrders.length === 0 ? (
+                  <div className="text-center py-8 text-xs text-slate-400 italic">No orders in this stage</div>
+                ) : (
+                  colOrders.map((order) => (
+                    <div
+                      key={order.id}
+                      onClick={() => setReceiptModalOrder(order)}
+                      className="bg-white rounded-lg p-2.5 border border-[#d0d4e4] shadow-2xs hover:shadow-sm hover:border-emerald-700 transition-all cursor-pointer space-y-2 group"
+                    >
+                      <div className="flex items-start justify-between gap-1">
+                        <div className="min-w-0">
+                          <h5 className="font-bold text-xs text-slate-900 truncate group-hover:text-emerald-800">
+                            {order.customerName}
+                          </h5>
+                          <span className="text-[10px] text-slate-500 font-mono">#{order.id.slice(0, 8)}</span>
+                        </div>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#f0f3f7] text-slate-700 shrink-0">
+                          {order.garmentType}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] pt-1 border-t border-[#f0f3f7]">
+                        <span className="font-bold text-slate-900">₹{order.totalAmount}</span>
+                        {order.balanceDue > 0 ? (
+                          <span className="text-[#e2445c] font-bold text-[10px]">Due: ₹{order.balanceDue}</span>
+                        ) : (
+                          <span className="text-[#00c875] font-bold text-[10px]">Paid</span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between text-[10px] text-slate-500">
+                        <span className={`font-semibold ${order.isOverdue ? 'text-[#e2445c] font-bold' : ''}`}>
+                          Due: {formatDueDisplay(order.dueDate)}
+                        </span>
+                      </div>
+
+                      {/* Kanban Action Buttons */}
+                      <div className="flex items-center justify-end gap-1 pt-1.5 border-t border-[#f0f3f7]" onClick={(e) => e.stopPropagation()}>
+                        {order.status !== 'Completed' && order.status !== 'Delivered' && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleQuickMarkReady(order, e)}
+                            className="h-5.5 px-2 rounded bg-[#00c875] hover:bg-[#00a35f] text-white text-[10px] font-bold flex items-center gap-1 shadow-2xs cursor-pointer active:scale-95 transition-all"
+                            title="Mark Ready to Deliver"
+                          >
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
+                            <span>Ready</span>
+                          </button>
+                        )}
+
+                        {order.status !== 'Delivered' && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleQuickMarkDelivered(order, e)}
+                            className="h-5.5 px-2 rounded bg-[#008060] hover:bg-[#006048] text-white text-[10px] font-bold flex items-center gap-1 shadow-2xs cursor-pointer active:scale-95 transition-all"
+                            title="Mark Delivered & Settle Balance"
+                          >
+                            <span>Deliver</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Add Order quick trigger */}
+              {onNewOrderClick && (
+                <button
+                  type="button"
+                  onClick={onNewOrderClick}
+                  className="mt-2 w-full py-1.5 rounded bg-white hover:bg-slate-100 text-emerald-800 font-semibold text-xs border border-dashed border-slate-300 flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>Add Order</span>
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-full font-sans pb-12">
+      {/* ================= 1. MONDAY.COM BOARD HEADER & TOOLBAR ================= */}
+      <div className="bg-white rounded-lg p-3.5 sm:p-4 border border-[#d0d4e4] shadow-2xs mb-4 space-y-3">
+        {/* Board Title & Top Controls */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#e6e9ef]">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-emerald-800 text-white flex items-center justify-center font-bold shadow-2xs">
+              <TableIcon className="w-4 h-4" />
+            </div>
             <div>
-              <h1 className="text-base font-black tracking-tight flex items-center gap-2">
-                <span>Orders Manager</span>
-                <span className="text-[10px] bg-amber-400 text-[#0B4636] px-2 py-0.5 rounded-full font-black">
-                  {activeOrders.length} ACTIVE
+              <div className="flex items-center gap-2">
+                <h1 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+                  Orders & Deliveries Board
+                </h1>
+                <span className="text-xs font-semibold bg-[#f0f3f7] text-slate-600 px-2 py-0.5 rounded-full">
+                  {orders.length} total
                 </span>
-              </h1>
-              <p className="text-[10px] text-amber-300">Search, filter & track customer deliveries</p>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Track tailor capacity, cut-to-stitch lifecycle, client fittings, and payment settlement.
+              </p>
             </div>
           </div>
 
-          {onNewOrderClick && (
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap self-end sm:self-auto">
+            {/* Quick Action 1: Stitch Popup */}
             <button
-              onClick={onNewOrderClick}
-              className="bg-amber-400 text-[#0B4636] px-2.5 py-1.5 rounded-xl text-xs font-black flex items-center gap-1 shadow cursor-pointer"
+              type="button"
+              onClick={() => {
+                if (onNewStitchClick) onNewStitchClick();
+                else setActivePopupType('stitch');
+              }}
+              className="bg-[#0B4636] hover:bg-[#073327] text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+              title="Open Bespoke Stitching Popup"
             >
-              <Plus className="w-3.5 h-3.5 stroke-[3]" />
-              <span>New</span>
+              <Shirt className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>+ Stitch</span>
             </button>
-          )}
-        </div>
-      ) : (
-        <div className="flex items-center justify-between mb-6 pb-4 border-b border-slate-200">
-          <div>
-            <h1 className="text-xl font-black text-slate-900 flex items-center gap-2">
-              <Package className="w-6 h-6 text-[#0B4636]" />
-              <span>Customer Orders & Deliveries</span>
-            </h1>
-            <p className="text-xs text-slate-500">
-              Manage complete customer lifecycle from cutting to delivery, overdue alerts, and archives.
-            </p>
-          </div>
 
-          <div className="flex items-center gap-2">
-            {onNewOrderClick && (
-              <button
-                onClick={onNewOrderClick}
-                className="bg-[#0B4636] hover:bg-[#073024] text-white px-4 py-2.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-              >
-                <Plus className="w-4 h-4 stroke-[3]" />
-                <span>+ New Order Entry</span>
-              </button>
-            )}
+            {/* Quick Action 2: Alter Popup */}
+            <button
+              type="button"
+              onClick={() => {
+                if (onNewAlterClick) onNewAlterClick();
+                else setActivePopupType('alter');
+              }}
+              className="bg-sky-700 hover:bg-sky-800 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+              title="Open Alteration & Fitting Popup"
+            >
+              <Scissors className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>+ Alter</span>
+            </button>
+
+            {/* Quick Action 3: Sale Popup */}
+            <button
+              type="button"
+              onClick={() => {
+                if (onNewSaleClick) onNewSaleClick();
+                else setActivePopupType('sale');
+              }}
+              className="bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+              title="Open Retail Ready-Made Sale Popup"
+            >
+              <ShoppingBag className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>+ Sale</span>
+            </button>
+
+            {/* Quick Action 4: Appointment Popup */}
+            <button
+              type="button"
+              onClick={() => {
+                if (onNewAppointmentClick) onNewAppointmentClick();
+                else setActivePopupType('appointment');
+              }}
+              className="bg-purple-700 hover:bg-purple-800 text-white px-3 py-1.5 rounded-lg text-xs font-bold shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+              title="Book Client Appointment / Fitting"
+            >
+              <Calendar className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>+ Appt</span>
+            </button>
 
             <button
+              type="button"
               onClick={onBack}
-              className="text-xs font-bold text-slate-600 hover:text-[#0B4636] flex items-center gap-1.5 bg-white px-3.5 py-2.5 rounded-xl border border-slate-200 shadow-sm cursor-pointer"
+              className="text-xs font-semibold text-slate-700 hover:bg-[#f0f3f7] px-3 py-1.5 rounded-lg border border-[#d0d4e4] flex items-center gap-1.5 cursor-pointer transition-colors"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-3.5 h-3.5" />
               <span>Back</span>
             </button>
           </div>
         </div>
-      )}
 
-      <div className={`space-y-4 ${isDesktopView ? 'w-full max-w-none' : 'p-3 max-w-3xl mx-auto'}`}>
-        
-        {/* ================= TOP METRICS KPI ROW ================= */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-          <div
-            onClick={() => setActiveTab('all')}
-            className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
-              activeTab === 'all'
-                ? 'bg-[#0B4636] text-white border-[#0B4636] shadow-md ring-2 ring-amber-300'
-                : 'bg-white border-slate-200 text-slate-800 hover:border-slate-300'
-            }`}
-          >
-            <div className="flex items-center justify-between text-[11px] font-bold opacity-80 mb-1">
-              <span>All Active</span>
-              <Package className="w-4 h-4" />
-            </div>
-            <div className="text-2xl font-black">{activeOrders.length}</div>
-            <div className="text-[10px] opacity-75 mt-0.5">Total active pipeline</div>
-          </div>
-
-          <div
-            onClick={() => setActiveTab('stitching')}
-            className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
-              activeTab === 'stitching'
-                ? 'bg-[#0B4636] text-white border-[#0B4636] shadow-md ring-2 ring-amber-300'
-                : 'bg-white border-slate-200 text-slate-800 hover:border-slate-300'
-            }`}
-          >
-            <div className="flex items-center justify-between text-[11px] font-bold opacity-80 mb-1">
-              <span>In Progress</span>
-              <Scissors className="w-4 h-4" />
-            </div>
-            <div className="text-2xl font-black">{stitchingOrders.length + cuttingOrders.length}</div>
-            <div className="text-[10px] opacity-75 mt-0.5">{cuttingOrders.length} cut • {stitchingOrders.length} sew</div>
-          </div>
-
-          <div
-            onClick={() => setActiveTab('overdue')}
-            className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
-              activeTab === 'overdue'
-                ? 'bg-rose-600 text-white border-rose-600 shadow-md ring-2 ring-rose-300'
-                : overdueOrders.length > 0
-                ? 'bg-rose-50 border-rose-200 text-rose-900 hover:bg-rose-100'
-                : 'bg-white border-slate-200 text-slate-800'
-            }`}
-          >
-            <div className="flex items-center justify-between text-[11px] font-black opacity-90 mb-1">
-              <span>Overdue</span>
-              <AlertTriangle className="w-4 h-4 text-amber-300" />
-            </div>
-            <div className="text-2xl font-black">{overdueOrders.length}</div>
-            <div className="text-[10px] opacity-80 mt-0.5">Past promised date</div>
-          </div>
-
-          <div
-            onClick={() => setActiveTab('completed')}
-            className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
-              activeTab === 'completed'
-                ? 'bg-[#0B4636] text-white border-[#0B4636] shadow-md ring-2 ring-amber-300'
-                : 'bg-white border-slate-200 text-slate-800 hover:border-slate-300'
-            }`}
-          >
-            <div className="flex items-center justify-between text-[11px] font-bold opacity-80 mb-1">
-              <span>Completed</span>
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-            </div>
-            <div className="text-2xl font-black">{completedOrders.length}</div>
-            <div className="text-[10px] opacity-75 mt-0.5">Ready or delivered</div>
-          </div>
-        </div>
-
-        {/* Urgent Overdue Banner if viewing Overdue tab or have overdue orders */}
-        {activeTab === 'overdue' && overdueOrders.length > 0 && (
-          <div className="bg-gradient-to-r from-rose-900 via-red-800 to-rose-950 text-white p-4 rounded-3xl shadow-md border border-rose-700 flex items-start gap-3.5">
-            <div className="p-2.5 rounded-2xl bg-white/10 shrink-0">
-              <AlertTriangle className="w-6 h-6 text-amber-300 animate-pulse" />
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-black uppercase tracking-wider text-amber-300">
-                  {overdueOrders.length} Urgent Overdue Deliveries
-                </h3>
-                <span className="text-[11px] font-black bg-white/20 px-2 py-0.5 rounded-full">
-                  ₹{overdueOrders.reduce((sum, o) => sum + o.balanceDue, 0)} Balance
-                </span>
-              </div>
-              <p className="text-xs text-rose-100 mt-1 leading-relaxed">
-                These customer garments have crossed promised delivery dates. Use 1-tap WhatsApp reminders or call them directly.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* ================= TAB CONTROLS & FILTER BAR ================= */}
-        <div className="bg-white rounded-3xl p-3 sm:p-4 border border-slate-200 shadow-sm space-y-3">
-          {/* Main Segmented Pill Tabs */}
-          <div className="flex items-center bg-slate-100 p-1 rounded-2xl gap-1 overflow-x-auto no-scrollbar text-xs font-extrabold">
+        {/* View Tabs & Search Filter Toolbar */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-0.5">
+          {/* View Modes (Main Table, Kanban, Cards) */}
+          <div className="flex items-center gap-1 bg-[#f0f3f7] p-1 rounded-md border border-[#d0d4e4] w-fit">
             <button
-              onClick={() => setActiveTab('all')}
-              className={`py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                activeTab === 'all'
-                  ? 'bg-[#0B4636] text-amber-300 shadow-md'
+              type="button"
+              onClick={() => setViewMode('table')}
+              className={`px-3 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                viewMode === 'table'
+                  ? 'bg-white text-emerald-800 shadow-2xs font-bold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <Package className="w-3.5 h-3.5" />
-              <span>All Orders ({activeOrders.length})</span>
+              <TableIcon className="w-3.5 h-3.5" />
+              <span>Main Table</span>
             </button>
 
             <button
-              onClick={() => setActiveTab('cutting')}
-              className={`py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                activeTab === 'cutting'
-                  ? 'bg-[#0B4636] text-amber-300 shadow-md'
+              type="button"
+              onClick={() => setViewMode('kanban')}
+              className={`px-3 py-1 rounded text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                viewMode === 'kanban'
+                  ? 'bg-white text-emerald-800 shadow-2xs font-bold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <Scissors className="w-3.5 h-3.5" />
-              <span>1. Cutting ({cuttingOrders.length})</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('stitching')}
-              className={`py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                activeTab === 'stitching'
-                  ? 'bg-[#0B4636] text-amber-300 shadow-md'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Clock className="w-3.5 h-3.5" />
-              <span>2-3. Stitching ({stitchingOrders.length})</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('overdue')}
-              className={`py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                activeTab === 'overdue'
-                  ? 'bg-rose-600 text-white shadow-md'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <AlertTriangle className="w-3.5 h-3.5" />
-              <span>⚠️ Overdue ({overdueOrders.length})</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('completed')}
-              className={`py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                activeTab === 'completed'
-                  ? 'bg-[#0B4636] text-amber-300 shadow-md'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>4. Ready ({completedOrders.length})</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('archived')}
-              className={`py-2 px-3 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 ${
-                activeTab === 'archived'
-                  ? 'bg-slate-800 text-white shadow-md'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Archive className="w-3.5 h-3.5" />
-              <span>5. Delivered ({archivedOrders.length})</span>
+              <Kanban className="w-3.5 h-3.5" />
+              <span>Kanban Board</span>
             </button>
           </div>
 
-          {/* Search and Dropdown Filter Row */}
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 pt-1">
+          {/* Search, Filter, and Sort Controls */}
+          <div className="flex items-center gap-2 flex-wrap">
             {/* Search Input */}
-            <div className="sm:col-span-6 relative">
-              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by customer name, phone, order #, tailor..."
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-3 py-2 text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-[#0B4636] focus:bg-white transition-all shadow-2xs"
+                placeholder="Search this board..."
+                className="bg-white border border-[#d0d4e4] rounded-md pl-8 pr-2.5 py-1 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-emerald-700 w-48 sm:w-56"
               />
-            </div>
-
-            {/* Tailor Filter */}
-            <div className="sm:col-span-3">
-              <select
-                value={selectedTailorFilter}
-                onChange={(e) => setSelectedTailorFilter(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:border-[#0B4636] shadow-2xs"
-              >
-                <option value="ALL">All Tailors</option>
-                {uniqueTailors.map((t) => (
-                  <option key={t} value={t}>
-                    Tailor: {t}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Sort Dropdown */}
-            <div className="sm:col-span-3">
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none focus:border-[#0B4636] shadow-2xs"
-              >
-                <option value="due_soonest">Due Date (Earliest)</option>
-                <option value="newest">Created (Newest)</option>
-                <option value="oldest">Created (Oldest)</option>
-                <option value="balance_high">Highest Balance Due</option>
-                <option value="overdue_most">Most Overdue</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* ================= ORDER CARDS LIST (DASHBOARD-ALIGNED RICH COLOR THEMES) ================= */}
-        <div className="space-y-3.5">
-          {sortedOrders.length === 0 ? (
-            <div className="bg-white rounded-3xl p-10 text-center border border-slate-200 shadow-sm space-y-3">
-              <div className="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto shadow-inner">
-                <Package className="w-7 h-7" />
-              </div>
-              <div>
-                <h3 className="text-base font-black text-slate-800">
-                  No orders found in "{activeTab.toUpperCase()}" view
-                </h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  {searchQuery
-                    ? `No matching records for search "${searchQuery}".`
-                    : 'All customer records are organized properly.'}
-                </p>
-              </div>
-              {onNewOrderClick && (
+              {searchQuery && (
                 <button
-                  onClick={onNewOrderClick}
-                  className="px-4 py-2 rounded-xl bg-[#0B4636] text-amber-300 font-extrabold text-xs inline-flex items-center gap-1.5 shadow cursor-pointer"
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                 >
-                  <Plus className="w-4 h-4 stroke-[3]" />
-                  <span>Create First Order</span>
+                  <X className="w-3 h-3" />
                 </button>
               )}
             </div>
-          ) : (
-            sortedOrders.map((order) => {
-              const hasStitchedPhotos = order.stitchedPhotos && order.stitchedPhotos.length > 0;
-              const isUnassigned =
-                !order.assignedTailor ||
-                order.assignedTailor === 'Unassigned' ||
-                order.assignedTailor === 'Not Assigned';
-              const currentStageIdx = getStageIndex(order.status);
-              const isCardMenuOpen = openCardMenuId === order.id;
-              const isVoicePlaying = playingVoiceOrderId === order.id;
 
-              // Card background tint based on category & status matching dashboard
-              const cardBgStyle = order.isOverdue
-                ? 'bg-gradient-to-br from-[#FFF1F2] via-[#FFF8F8] to-[#FFE4E6] border-rose-300 ring-1 ring-rose-300/70 shadow-sm'
-                : order.orderCategory === 'Alteration' || order.orderCategory === 'Repair'
-                ? 'bg-gradient-to-br from-[#FAF5FF] via-[#FDFBFE] to-[#F3E8FF]/80 border-fuchsia-200/90 hover:border-fuchsia-300 hover:shadow-md'
-                : order.status === 'Completed' || order.status === 'Delivered'
-                ? 'bg-gradient-to-br from-[#F0FDF4] via-[#F9FDFB] to-[#DCFCE7]/70 border-emerald-200/90 hover:border-emerald-300 hover:shadow-md'
-                : order.status === 'Stitching in Progress'
-                ? 'bg-gradient-to-br from-[#EEF2FF] via-[#F8FAFF] to-[#E0E7FF]/80 border-indigo-200/90 hover:border-indigo-300 hover:shadow-md'
-                : 'bg-gradient-to-br from-[#F0FDF9] via-[#FAFCFB] to-[#E2F7EE]/70 border-teal-200/90 hover:border-teal-300 hover:shadow-md';
+            {/* Vertical Filter Pills */}
+            <div className="flex items-center gap-1 bg-[#f0f3f7] p-0.5 rounded-md border border-[#d0d4e4]">
+              <button
+                type="button"
+                onClick={() => setSelectedCategoryFilter('ALL')}
+                className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all cursor-pointer ${
+                  selectedCategoryFilter === 'ALL'
+                    ? 'bg-white text-slate-900 font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                All
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedCategoryFilter('Stitch')}
+                className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all cursor-pointer ${
+                  selectedCategoryFilter === 'Stitch'
+                    ? 'bg-emerald-800 text-white font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Stitch
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedCategoryFilter('Alteration')}
+                className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all cursor-pointer ${
+                  selectedCategoryFilter === 'Alteration'
+                    ? 'bg-[#a25ddc] text-white font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Alter
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedCategoryFilter('Sale')}
+                className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all cursor-pointer ${
+                  selectedCategoryFilter === 'Sale'
+                    ? 'bg-[#0086c0] text-white font-bold shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Retail
+              </button>
+            </div>
 
-              return (
-                <div
-                  key={order.id}
-                  className={`rounded-xl p-2.5 sm:p-3 border transition-all space-y-1.5 shadow-2xs ${cardBgStyle}`}
-                >
-                  {/* Top Header Row of Card */}
-                  <div className="flex items-center justify-between gap-1.5 flex-wrap border-b border-slate-200/50 pb-1.5">
-                    {/* Left Badges */}
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={(e) => handleCopyOrderId(order.id, e)}
-                        className="bg-white/90 hover:bg-white px-1.5 py-0.5 rounded-md text-[11px] font-mono font-black text-slate-800 border border-slate-200/90 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                        title="Click to copy Order #"
-                      >
-                        <span>#{order.id}</span>
-                        <Copy className="w-2.5 h-2.5 text-slate-400" />
-                        {copiedOrderId === order.id && (
-                          <span className="text-[9px] text-emerald-700 font-bold ml-0.5">Copied!</span>
-                        )}
-                      </button>
-
-                      {/* Category Pill */}
-                      <span
-                        className={`px-1.5 py-0.2 rounded text-[9px] font-black border shadow-2xs ${
-                          order.orderCategory === 'Alteration' || order.orderCategory === 'Repair'
-                            ? 'bg-fuchsia-100 text-fuchsia-900 border-fuchsia-300'
-                            : 'bg-emerald-100 text-emerald-900 border-emerald-300'
-                        }`}
-                      >
-                        {order.orderCategory || 'New Stitch'}
-                      </span>
-
-                      {order.isRepeatCustomer && (
-                        <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-900 text-[9px] font-bold border border-blue-300 flex items-center gap-0.5 shadow-2xs">
-                          <UserCheck className="w-2.5 h-2.5" />
-                          Repeat
-                        </span>
-                      )}
-
-                      {order.isOverdue && (
-                        <span className="px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 text-[9px] font-black border border-rose-300 flex items-center gap-0.5 shadow-2xs animate-pulse">
-                          🔥 Overdue ({order.daysOverdue}d)
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Right Payment Status & 3-Dot Menu */}
-                    <div className="flex items-center gap-1.5">
-                      <div className="text-right flex items-center gap-1.5">
-                        <span className="text-xs font-black text-slate-900">Total: ₹{order.totalAmount}</span>
-                        {order.balanceDue > 0 ? (
-                          <span className="px-1.5 py-0.2 rounded bg-rose-100 border border-rose-300 text-rose-800 text-[9px] font-black inline-block shadow-2xs">
-                            Due: ₹{order.balanceDue}
-                          </span>
-                        ) : (
-                          <span className="px-1.5 py-0.2 rounded bg-emerald-100 border border-emerald-300 text-emerald-800 text-[9px] font-black inline-block shadow-2xs">
-                            ✓ Paid in Full
-                          </span>
-                        )}
-                      </div>
-
-                      {/* 3-Dot Options Dropdown */}
-                      <div className="relative">
-                        <button
-                          type="button"
-                          onClick={() => setOpenCardMenuId(isCardMenuOpen ? null : order.id)}
-                          className="p-1 rounded bg-white/80 hover:bg-white text-slate-600 hover:text-slate-900 border border-slate-200/80 transition-colors cursor-pointer shadow-2xs"
-                        >
-                          <MoreVertical className="w-3 h-3" />
-                        </button>
-
-                        {isCardMenuOpen && (
-                          <div className="absolute right-0 mt-1 w-48 bg-white rounded-xl shadow-xl border border-slate-200 p-1 z-30 space-y-0.5 text-xs font-bold text-slate-700 animate-in fade-in zoom-in duration-150">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenCardMenuId(null);
-                                onSelectOrder(order);
-                              }}
-                              className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 cursor-pointer"
-                            >
-                              <FileText className="w-3.5 h-3.5 text-slate-500" />
-                              <span>View Full Details</span>
-                            </button>
-
-                            {onAssignTimelineClick && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenCardMenuId(null);
-                                  onAssignTimelineClick(order);
-                                }}
-                                className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 cursor-pointer"
-                              >
-                                <Scissors className="w-3.5 h-3.5 text-slate-500" />
-                                <span>Change Tailor / Due Date</span>
-                              </button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setOpenCardMenuId(null);
-                                setReceiptModalOrder(order);
-                              }}
-                              className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 cursor-pointer"
-                            >
-                              <Printer className="w-3.5 h-3.5 text-slate-500" />
-                              <span>Print / Share Bill</span>
-                            </button>
-
-                            {order.status !== 'Delivered' && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenCardMenuId(null);
-                                  handleStatusChangeRequest(order, 'Delivered');
-                                }}
-                                className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-emerald-50 text-emerald-800 font-black flex items-center gap-2 cursor-pointer"
-                              >
-                                <ShoppingBag className="w-3.5 h-3.5 text-emerald-600" />
-                                <span>Mark Delivered</span>
-                              </button>
-                            )}
-
-                            {order.isArchived ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenCardMenuId(null);
-                                  if (onUnarchiveOrder) onUnarchiveOrder(order.id);
-                                }}
-                                className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-slate-100 text-slate-700 flex items-center gap-2 cursor-pointer"
-                              >
-                                <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
-                                <span>Restore Order</span>
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setOpenCardMenuId(null);
-                                  onArchiveOrder(order.id);
-                                }}
-                                className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-rose-50 text-rose-700 flex items-center gap-2 cursor-pointer"
-                              >
-                                <Archive className="w-3.5 h-3.5 text-rose-500" />
-                                <span>Archive Order</span>
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Middle Row (3 Horizontal Columns on Desktop) */}
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 items-center">
-                    
-                    {/* Column 1: Customer & Garment (4 cols) */}
-                    <div className="lg:col-span-4 flex flex-col justify-center space-y-1">
-                      <div className="flex items-center gap-2">
-                        {/* Photo Box */}
-                        <div
-                          onClick={() => {
-                            if (order.receiptImageUrl || (order.fabricPhotos && order.fabricPhotos[0])) {
-                              setSlipModalOrder(order);
-                            } else {
-                              onSelectOrder(order);
-                            }
-                          }}
-                          className="w-9 h-9 rounded-lg bg-white border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center cursor-pointer hover:opacity-90 relative group shadow-2xs"
-                          title="Click to view slip / fabric photo"
-                        >
-                          {hasStitchedPhotos && order.stitchedPhotos ? (
-                            <img src={order.stitchedPhotos[0]} alt="Stitched" className="w-full h-full object-cover" />
-                          ) : order.fabricPhotos && order.fabricPhotos[0] ? (
-                            <img src={order.fabricPhotos[0]} alt="Fabric" className="w-full h-full object-cover" />
-                          ) : order.receiptImageUrl ? (
-                            <img src={order.receiptImageUrl} alt="Slip" className="w-full h-full object-cover" />
-                          ) : (
-                            <span className="text-sm">🧵</span>
-                          )}
-                        </div>
-
-                        {/* Customer Info */}
-                        <div className="min-w-0 flex-1">
-                          <h4
-                            onClick={() => onSelectOrder(order)}
-                            className="text-xs font-black text-slate-900 truncate hover:text-[#0B4636] cursor-pointer leading-tight"
-                          >
-                            {order.customerName}
-                          </h4>
-                          <div className="text-[10px] text-slate-500 font-medium truncate">{order.customerPhone}</div>
-                          <div className="text-[11px] font-black text-[#0B4636] truncate">
-                            {order.garmentType} {order.subTypeStyle && <span className="font-semibold text-slate-500">({order.subTypeStyle})</span>}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Special Notes banner if present */}
-                      {order.specialNotes && (
-                        <div className="bg-amber-50/90 border border-amber-200/90 rounded-md p-1 flex items-center gap-1 text-[9px] text-amber-950 shadow-2xs">
-                          <span className="font-black text-amber-800 shrink-0">📝</span>
-                          <span className="truncate font-semibold">{order.specialNotes}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Column 2: Worker & 5-Node Stepper (6 cols) */}
-                    <div className="lg:col-span-6 space-y-1 bg-white/90 backdrop-blur-xs p-1.5 sm:p-2 rounded-xl border border-slate-200/70 shadow-2xs">
-                      {/* Worker Header Info */}
-                      <div className="flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <div className="w-4 h-4 rounded bg-[#0B4636] text-amber-300 text-[9px] font-black flex items-center justify-center shrink-0">
-                            {isUnassigned ? '✂️' : (order.assignedTailor ? order.assignedTailor[0] : 'S')}
-                          </div>
-                          <span className="font-black text-slate-900 text-[11px] truncate">
-                            {isUnassigned ? 'Unassigned' : order.assignedTailor}
-                          </span>
-                          <span
-                            className={`text-[8px] font-bold px-1.5 py-0.2 rounded-full ${
-                              order.status === 'Stitching in Progress'
-                                ? 'bg-indigo-100 text-indigo-800'
-                                : order.status === 'Completed'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : 'bg-slate-200 text-slate-700'
-                            }`}
-                          >
-                            {order.status}
-                          </span>
-                        </div>
-
-                        <div className="text-[9px] text-slate-400 font-medium">
-                          ⏱ ~{order.estimatedHours || 4}h
-                        </div>
-                      </div>
-
-                      {/* 5-Node Stepper */}
-                      <div className="relative flex items-center justify-between pt-0.5">
-                        {/* Connecting track line */}
-                        <div className="absolute top-[10px] left-3 right-3 h-0.5 bg-slate-200 -z-0" />
-                        <div
-                          className="absolute top-[10px] left-3 h-0.5 bg-emerald-500 -z-0 transition-all duration-300"
-                          style={{ width: `${Math.min(100, Math.max(0, (currentStageIdx / 4) * 100))}%` }}
-                        />
-
-                        {[
-                          { stage: 'Cutting', label: 'Cutting' },
-                          { stage: 'Assigned', label: 'Assigned' },
-                          { stage: 'Stitching', label: 'Stitching' },
-                          { stage: 'Ready', label: 'Ready' },
-                          { stage: 'Delivered', label: 'Delivered' },
-                        ].map((node, nIdx) => {
-                          const isDone = nIdx < currentStageIdx;
-                          const isCurrent = nIdx === currentStageIdx;
-
-                          return (
-                            <div
-                              key={node.stage}
-                              onClick={() => {
-                                if (node.stage === 'Cutting') handleStatusChangeRequest(order, 'New / Cutting');
-                                if (node.stage === 'Assigned') handleStatusChangeRequest(order, 'Assigned');
-                                if (node.stage === 'Stitching') handleStatusChangeRequest(order, 'Stitching in Progress');
-                                if (node.stage === 'Ready') handleStatusChangeRequest(order, 'Completed');
-                                if (node.stage === 'Delivered') handleStatusChangeRequest(order, 'Delivered');
-                              }}
-                              className="flex flex-col items-center cursor-pointer relative z-10 group"
-                              title={`Click to switch status to ${node.stage}`}
-                            >
-                              {/* Node Circle */}
-                              <div
-                                className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black transition-all ${
-                                  isDone
-                                    ? 'bg-emerald-500 text-white shadow-2xs'
-                                    : isCurrent
-                                    ? 'bg-indigo-600 text-white ring-2 ring-indigo-200 shadow-xs scale-105'
-                                    : 'bg-white border border-slate-300 text-slate-400 group-hover:border-slate-400'
-                                }`}
-                              >
-                                {isDone ? (
-                                  <Check className="w-2.5 h-2.5 stroke-[3]" />
-                                ) : isCurrent ? (
-                                  <Sparkles className="w-2.5 h-2.5 text-amber-300" />
-                                ) : (
-                                  <span>{nIdx + 1}</span>
-                                )}
-                              </div>
-
-                              {/* Label */}
-                              <span
-                                className={`text-[9px] mt-0.5 font-bold ${
-                                  isCurrent
-                                    ? 'text-indigo-950 font-black'
-                                    : isDone
-                                    ? 'text-slate-800'
-                                    : 'text-slate-400'
-                                }`}
-                              >
-                                {node.label}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Column 3: Delivery Info Box (2 cols) */}
-                    <div className="lg:col-span-2 bg-white/90 backdrop-blur-xs p-1.5 rounded-xl border border-slate-200/70 text-center sm:text-right flex lg:flex-col justify-between items-center lg:items-end shadow-2xs">
-                      <div className="flex items-center gap-1 text-[8px] font-bold text-slate-400 uppercase tracking-wider">
-                        <Calendar className="w-2 h-2" />
-                        <span>Delivery</span>
-                      </div>
-                      <div>
-                        <div className="text-xs font-black text-slate-900">{order.dueDate}</div>
-                        <div className="text-[9px] text-slate-500 font-medium">{order.dueTime || '18:00'}</div>
-                      </div>
-                      {order.isOverdue ? (
-                        <span className="text-[8px] font-black text-rose-600">🔴 Overdue</span>
-                      ) : (
-                        <span className="text-[8px] font-bold text-emerald-600">🟢 On Track</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Stitched Photos Strip (if finished dress photos attached) */}
-                  {hasStitchedPhotos && order.stitchedPhotos && (
-                    <div className="p-1.5 rounded-xl bg-emerald-50/60 border border-emerald-200/80 space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-[9px] font-black text-emerald-900 flex items-center gap-1">
-                          <Camera className="w-2.5 h-2.5 text-emerald-700" />
-                          <span>Finished Garment ({order.stitchedPhotos.length}):</span>
-                        </span>
-                        <span className="text-[8px] font-bold text-emerald-700">Click to zoom</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
-                        {order.stitchedPhotos.map((photo, pIdx) => (
-                          <div
-                            key={pIdx}
-                            onClick={() => setExpandedPhotoUrl(photo)}
-                            className="w-8 h-8 rounded-md overflow-hidden border border-emerald-300 bg-white shrink-0 cursor-pointer hover:scale-105 transition-transform shadow-2xs"
-                          >
-                            <img src={photo} alt={`Stitched ${pIdx + 1}`} className="w-full h-full object-cover" />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Bottom Action Buttons Row */}
-                  <div className="flex items-center justify-between pt-1 border-t border-slate-200/50 gap-1 flex-wrap">
-                    {/* Left Actions: Slip Photo, Receipt, & Single Voice Note button */}
-                    <div className="flex items-center gap-1 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() => setSlipModalOrder(order)}
-                        className="px-2 py-0.5 rounded-md bg-white/90 hover:bg-white text-amber-900 border border-amber-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                      >
-                        <Camera className="w-3 h-3 text-amber-800" />
-                        <span>Slip</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setReceiptModalOrder(order)}
-                        className="px-2 py-0.5 rounded-md bg-white/90 hover:bg-white text-teal-900 border border-teal-300 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                      >
-                        <FileText className="w-3 h-3 text-teal-800" />
-                        <span>Receipt</span>
-                      </button>
-
-                      {/* Single Voice Note Play Button */}
-                      {order.voiceNoteUrl && (
-                        <button
-                          type="button"
-                          onClick={(e) => handleToggleVoicePlay(order, e)}
-                          className={`px-2 py-0.5 rounded-md border text-[11px] font-black flex items-center gap-1 cursor-pointer transition-all shadow-2xs ${
-                            isVoicePlaying
-                              ? 'bg-purple-600 text-white border-purple-500 shadow-md ring-2 ring-purple-300 animate-pulse'
-                              : 'bg-purple-100 hover:bg-purple-200 text-purple-900 border-purple-300'
-                          }`}
-                          title={isVoicePlaying ? 'Pause Voice Instruction' : 'Play Voice Instruction'}
-                        >
-                          <Mic className={`w-3 h-3 ${isVoicePlaying ? 'text-white' : 'text-purple-800'}`} />
-                          <span>{isVoicePlaying ? 'Playing...' : `Voice (${order.voiceNoteDurationSec || 12}s)`}</span>
-                          {isVoicePlaying ? (
-                            <Pause className="w-3 h-3 fill-current" />
-                          ) : (
-                            <Play className="w-3 h-3 fill-current ml-0.5" />
-                          )}
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Right Actions: WhatsApp & Phone Call */}
-                    <div className="flex items-center gap-1">
-                      {order.status === 'Completed' && (
-                        <button
-                          type="button"
-                          onClick={() => handleStatusChangeRequest(order, 'Delivered')}
-                          className="px-2 py-0.5 rounded-md bg-[#0B4636] hover:bg-[#073024] text-amber-300 font-black text-[11px] flex items-center gap-1 shadow-2xs cursor-pointer active:scale-95 transition-all"
-                        >
-                          <ShoppingBag className="w-3 h-3 stroke-[2.5]" />
-                          <span>Deliver (₹{order.balanceDue})</span>
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setExtendingOrderId(order.id);
-                          setNewDueDate(order.dueDate);
-                          setNewDueTime(order.dueTime || '18:00');
-                        }}
-                        className="p-1 rounded bg-white/90 hover:bg-white text-slate-700 border border-slate-200 cursor-pointer shadow-2xs"
-                        title="Reschedule Promised Date"
-                      >
-                        <Calendar className="w-3 h-3" />
-                      </button>
-
-                      <a
-                        href={getWhatsAppUrl(
-                          order.customerPhone,
-                          `Hello ${order.customerName}, update from ${shopProfile?.shopName || 'ShopScopers Tailor'} regarding your ${order.garmentType} (Order #${order.id}): Current status is "${order.status}". Balance due at pickup: ₹${order.balanceDue}.`
-                        )}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-2.5 py-0.5 rounded-md bg-[#25D366] hover:bg-[#20bd5a] text-white font-black text-[11px] flex items-center gap-1 shadow-2xs cursor-pointer transition-all active:scale-95"
-                      >
-                        <Send className="w-3 h-3" />
-                        <span>WhatsApp</span>
-                      </a>
-
-                      <a
-                        href={`tel:${clean10DigitPhone(order.customerPhone)}`}
-                        className="p-1 rounded bg-white/90 hover:bg-white text-slate-700 border border-slate-200 cursor-pointer shadow-2xs"
-                        title="Call Customer Directly"
-                      >
-                        <Phone className="w-3 h-3" />
-                      </a>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
+            {/* Sort Select */}
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="bg-white border border-[#d0d4e4] rounded-md px-2 py-1 text-xs font-medium text-slate-700 focus:outline-none focus:border-emerald-700 cursor-pointer"
+            >
+              <option value="due_soonest">Due Date (Earliest)</option>
+              <option value="newest">Created (Newest)</option>
+              <option value="oldest">Created (Oldest)</option>
+              <option value="balance_high">Highest Balance Due</option>
+              <option value="overdue_most">Most Overdue</option>
+            </select>
+          </div>
         </div>
       </div>
 
-      {/* ================= MODAL 1: RESCHEDULE PROMISED DATE & TIME MODAL ================= */}
-      {extendingOrderId && (() => {
-        const targetOrder = orders.find((o) => o.id === extendingOrderId);
-        if (!targetOrder) return null;
+      {/* ================= 2. MAIN CONTENT VIEW ================= */}
+      {viewMode === 'kanban' ? (
+        renderKanbanView()
+      ) : (
+        <div className="space-y-4">
+          {/* Overdue Attention Group (if any overdue) */}
+          {groupedOrders.overdue.length > 0 && (
+            renderMondayTableGroup(
+              'overdue',
+              '🚨 Overdue & Urgent Attention',
+              '⚠️',
+              '#e2445c',
+              groupedOrders.overdue,
+              'No overdue orders.'
+            )
+          )}
 
-        const handleSaveReschedule = () => {
-          onExtendDueDate(extendingOrderId, newDueDate);
-          roomDb.updateOrderDueDate(extendingOrderId, newDueDate, newDueTime);
-          setExtendingOrderId(null);
-        };
+          {/* Stitching & Custom Tailoring Orders Group */}
+          {renderMondayTableGroup(
+            'stitch',
+            '⚡ Active Stitching Orders',
+            '🧵',
+            '#047857',
+            groupedOrders.stitch,
+            'No active stitching orders in this filter.'
+          )}
 
-        return (
-          <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-            <div className="bg-white rounded-3xl w-full max-w-md p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4 my-auto animate-in fade-in zoom-in duration-150">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-200">
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-5 h-5 text-[#0B4636]" />
-                  <div>
-                    <h3 className="font-extrabold text-base text-slate-900">Reschedule Delivery</h3>
-                    <p className="text-[10px] text-slate-500">Order #{targetOrder.id} • {targetOrder.customerName}</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setExtendingOrderId(null)}
-                  className="p-1 rounded-full text-slate-400 hover:text-slate-600 cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+          {/* Alterations & Fittings Group */}
+          {renderMondayTableGroup(
+            'alteration',
+            '✂️ Alterations & Fitting Repairs',
+            '✂️',
+            '#a25ddc',
+            groupedOrders.alteration,
+            'No alteration orders.'
+          )}
 
-              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-                <PromisedDateTimeInput
-                  date={newDueDate}
-                  time={newDueTime}
-                  onDateChange={(d) => setNewDueDate(d)}
-                  onTimeChange={(t) => setNewDueTime(t)}
-                  showPresets={true}
-                  showStatusBanner={true}
-                  label="Promised Date & Time"
-                />
-              </div>
+          {/* Ready-Made Retail & Boutique Sales Group */}
+          {renderMondayTableGroup(
+            'sale',
+            '🛍️ Ready-Made Retail & Boutique Sales',
+            '🛍️',
+            '#0086c0',
+            groupedOrders.sale,
+            'No retail sales records.'
+          )}
 
-              <div className="flex items-center gap-2 pt-2 border-t border-slate-200">
-                <button
-                  type="button"
-                  onClick={handleSaveReschedule}
-                  className="flex-1 py-2.5 bg-[#0B4636] hover:bg-[#073024] text-amber-300 font-extrabold rounded-xl text-xs shadow flex items-center justify-center gap-2 cursor-pointer border border-amber-300/30"
-                >
-                  <Check className="w-4 h-4 text-amber-300" />
-                  <span>Update Promised Schedule</span>
-                </button>
+          {/* Completed & Delivered Archive Group */}
+          {renderMondayTableGroup(
+            'completed',
+            '✅ Completed & Delivered Orders',
+            '🎉',
+            '#00c875',
+            groupedOrders.completed,
+            'No completed orders yet.'
+          )}
+        </div>
+      )}
 
-                <button
-                  type="button"
-                  onClick={() => setExtendingOrderId(null)}
-                  className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* ================= MODAL 2: RECEIPT / BILL MODAL ================= */}
+      {/* ================= MODAL: RECEIPT / BILL MODAL ================= */}
       {receiptModalOrder && (
-        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center font-black">
-                  <FileText className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-black text-slate-900">Order Invoice / Receipt</h3>
-                  <p className="text-[10px] text-slate-500 font-mono">#{receiptModalOrder.id}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setReceiptModalOrder(null)}
-                className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Receipt Body */}
-            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 font-mono text-xs space-y-3 text-slate-800">
-              <div className="text-center border-b border-slate-200 pb-2">
-                <div className="font-black text-sm text-slate-900">{shopProfile?.shopName || 'ShopScopers Tailor'}</div>
-                <div className="text-[10px] text-slate-500">{shopProfile?.address || 'Master Boutique & Tailors'}</div>
-                <div className="text-[10px] text-slate-500">Phone: {shopProfile?.phone || '+91 7608807790'}</div>
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Customer:</span>
-                  <span className="font-bold">{receiptModalOrder.customerName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Mobile:</span>
-                  <span>{receiptModalOrder.customerPhone}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Garment:</span>
-                  <span className="font-bold">{receiptModalOrder.garmentType}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Promised Date:</span>
-                  <span className="font-bold text-[#0B4636]">{receiptModalOrder.dueDate}</span>
-                </div>
-              </div>
-
-              <div className="border-t border-b border-slate-200 py-2 space-y-1">
-                <div className="flex justify-between">
-                  <span>Stitching Charges:</span>
-                  <span className="font-bold">₹{receiptModalOrder.totalAmount}</span>
-                </div>
-                <div className="flex justify-between text-emerald-700">
-                  <span>Advance Received:</span>
-                  <span>- ₹{receiptModalOrder.advancePaid}</span>
-                </div>
-                <div className="flex justify-between font-black text-sm text-slate-900 pt-1 border-t border-slate-200">
-                  <span>Balance Due on Delivery:</span>
-                  <span className={receiptModalOrder.balanceDue > 0 ? 'text-rose-600' : 'text-emerald-600'}>
-                    ₹{receiptModalOrder.balanceDue}
-                  </span>
-                </div>
-              </div>
-
-              <div className="text-center text-[10px] text-slate-400">
-                Thank you for choosing {shopProfile?.shopName || 'ShopScopers'}!
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center gap-2 pt-2">
-              <a
-                href={getWhatsAppUrl(
-                  receiptModalOrder.customerPhone,
-                  `🧾 *Receipt from ${shopProfile?.shopName || 'ShopScopers'}*\nOrder #${receiptModalOrder.id}\nGarment: ${receiptModalOrder.garmentType}\nTotal: ₹${receiptModalOrder.totalAmount}\nAdvance: ₹${receiptModalOrder.advancePaid}\nBalance Due: ₹${receiptModalOrder.balanceDue}\nPromised Date: ${receiptModalOrder.dueDate}`
-                )}
-                target="_blank"
-                rel="noreferrer"
-                className="flex-1 py-2.5 bg-[#25D366] hover:bg-[#20bd5a] text-white font-black text-xs rounded-xl flex items-center justify-center gap-1.5 shadow cursor-pointer"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>Send WhatsApp Receipt</span>
-              </a>
-
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="py-2.5 px-4 rounded-xl border border-slate-200 font-bold text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Print</span>
-              </button>
-            </div>
-          </div>
-        </div>
+        <OrderReceiptModal
+          order={receiptModalOrder}
+          shopProfile={shopProfile}
+          onClose={() => setReceiptModalOrder(null)}
+          onUpdateStatus={onUpdateStatus}
+          onDeliverOrder={onDeliverOrder}
+          onRecordPayment={(orderId, amount, mode, note) => {
+            roomDb.recordPayment(orderId, amount, mode, note);
+          }}
+          onAssignTimelineClick={(ord) => {
+            setReceiptModalOrder(null);
+            if (onAssignTimelineClick) onAssignTimelineClick(ord);
+          }}
+        />
       )}
 
-      {/* ================= MODAL 3: SLIP PHOTO MODAL ================= */}
-      {slipModalOrder && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl p-5 max-w-md w-full shadow-2xl border border-slate-200 space-y-3 animate-in fade-in zoom-in duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-              <div>
-                <h3 className="text-sm font-black text-slate-900">Order Slip / Fabric Photo</h3>
-                <p className="text-[11px] text-slate-500 font-mono">#{slipModalOrder.id} • {slipModalOrder.customerName}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSlipModalOrder(null)}
-                className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="rounded-2xl overflow-hidden bg-slate-100 border border-slate-200 max-h-[60vh] flex items-center justify-center">
-              {slipModalOrder.receiptImageUrl || (slipModalOrder.fabricPhotos && slipModalOrder.fabricPhotos[0]) ? (
-                <img
-                  src={slipModalOrder.receiptImageUrl || slipModalOrder.fabricPhotos[0]}
-                  alt="Order Slip"
-                  className="w-full h-auto object-contain"
-                />
-              ) : (
-                <div className="p-8 text-center text-slate-400 space-y-2">
-                  <Camera className="w-8 h-8 mx-auto" />
-                  <p className="text-xs">No physical slip photo was captured for this order.</p>
-                </div>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setSlipModalOrder(null)}
-              className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl cursor-pointer"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ================= MODAL 4: ORDER COMPLETED MODAL ================= */}
+      {/* ================= MODAL: ORDER COMPLETED MODAL ================= */}
       {completedModalOrder && (
         <OrderCompletedModal
           order={completedModalOrder}
@@ -1323,7 +1455,7 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
         />
       )}
 
-      {/* ================= MODAL 5: ORDER DELIVERY MODAL ================= */}
+      {/* ================= MODAL: ORDER DELIVERY MODAL ================= */}
       {deliveryModalOrder && (
         <OrderDeliveryModal
           order={deliveryModalOrder}
@@ -1333,27 +1465,24 @@ export const Screen5OrdersManager: React.FC<Screen5OrdersManagerProps> = ({
         />
       )}
 
-      {/* ================= MODAL 6: FULL SCREEN PHOTO ZOOM MODAL ================= */}
-      {expandedPhotoUrl && (
-        <div
-          onClick={() => setExpandedPhotoUrl(null)}
-          className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center z-50 p-4 cursor-pointer"
-        >
-          <div className="relative max-w-2xl max-h-[90vh] bg-slate-900 rounded-3xl overflow-hidden shadow-2xl p-2">
-            <button
-              onClick={() => setExpandedPhotoUrl(null)}
-              className="absolute top-4 right-4 p-2 bg-black/60 text-white rounded-full hover:bg-black"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <img
-              src={expandedPhotoUrl}
-              alt="Zoomed stitched dress"
-              className="w-full h-auto max-h-[85vh] object-contain rounded-2xl"
-            />
-          </div>
-        </div>
-      )}
+      {/* ================= MODERN ORDER POPUPS (Stitch, Alter, Sale, Appointment) ================= */}
+      <ModernOrderPopups
+        isOpen={activePopupType !== null}
+        activeType={activePopupType}
+        onClose={() => setActivePopupType(null)}
+        onSaveOrder={(ord) => {
+          if (onSaveOrder) {
+            onSaveOrder(ord);
+          } else {
+            roomDb.saveOrder(ord);
+          }
+          setActivePopupType(null);
+        }}
+        shopProfile={shopProfile}
+        existingCustomers={existingCustomers}
+        tailors={tailors}
+        isDesktopView={isDesktopView}
+      />
     </div>
   );
 };
